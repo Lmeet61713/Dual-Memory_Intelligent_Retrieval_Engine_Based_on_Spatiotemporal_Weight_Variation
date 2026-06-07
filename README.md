@@ -162,6 +162,9 @@ homer/
 │   ├── data_exporter.py    # 会话与记忆持久化
 │   └── static/
 │       └── index.html      # 前端界面
+├── models/
+|   |──YOLO(global)         # 全局摄像头
+|   |──YOLO(mobile)         # 移动摄像头
 ├── decision/
 │   ├── matcher.py          # 双摄匹配引擎（含图边更新）
 │   ├── confidence_manager.py  # 动态权重/显著性管理
