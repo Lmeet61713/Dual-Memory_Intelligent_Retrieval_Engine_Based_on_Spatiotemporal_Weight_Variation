@@ -1,0 +1,511 @@
+<!-- application/static/index.html -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Homer - 智能家庭助手 🏠</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'Roboto', 'Microsoft YaHei', sans-serif;
+            background: #f5f6fa;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ===== 侧边栏 ===== */
+        .sidebar {
+            width: 260px;
+            background: #fff;
+            border-right: 1px solid #e0e3e7;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+            flex-shrink: 0;
+            box-shadow: 1px 0 4px rgba(0,0,0,0.04);
+        }
+        .sidebar h3 {
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+            color: #2c3e50;
+        }
+        .btn {
+            width: 100%;
+            padding: 0.6rem 1rem;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            transition: background 0.2s;
+        }
+        .btn-new {
+            background: #4a90e2;
+            color: #fff;
+        }
+        .btn-new:hover { background: #357abd; }
+
+        .section-label {
+            font-size: 0.75rem;
+            color: #999;
+            text-transform: uppercase;
+            margin: 1rem 0 0.3rem;
+            letter-spacing: 0.5px;
+        }
+
+        .session-list {
+            list-style: none;
+            flex: 1;
+            overflow-y: auto;
+            max-height: 180px;
+        }
+        .session-item {
+            display: flex;
+            align-items: center;
+            padding: 0.35rem 0.5rem;
+            cursor: pointer;
+            border-radius: 0.3rem;
+            font-size: 0.82rem;
+            margin-bottom: 0.15rem;
+            transition: background 0.15s;
+        }
+        .session-item:hover { background: #f0f4ff; }
+        .session-item.active { background: #e3edff; font-weight: 600; }
+        .session-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .del-btn {
+            background: none;
+            border: none;
+            color: #c0392b;
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 0 0.3rem;
+            opacity: 0.6;
+        }
+        .del-btn:hover { opacity: 1; }
+
+        hr { border: none; border-top: 1px solid #eee; margin: 0.8rem 0; }
+
+        /* 摄像头 */
+        .btn-camera {
+            background: #fff;
+            color: #27ae60;
+            border: 1px solid #27ae60;
+        }
+        .btn-camera:hover { background: #eafaf1; }
+        .btn-camera.running {
+            background: #e74c3c;
+            color: #fff;
+            border-color: #e74c3c;
+        }
+        .status-text {
+            font-size: 0.75rem;
+            color: #888;
+            text-align: center;
+            margin-top: 0.2rem;
+        }
+
+        /* ===== 主聊天区 ===== */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #fafbfc;
+            min-width: 0;
+        }
+        .chat-header {
+            padding: 0.7rem 1.5rem;
+            background: #fff;
+            border-bottom: 1px solid #e0e3e7;
+            font-size: 0.85rem;
+            color: #555;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+        }
+        .msg {
+            display: flex;
+            animation: fadeIn 0.3s;
+        }
+        /* 提醒泡泡样式 */
+        .reminder-bubble {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #ff9800;
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 2rem;
+            font-size: 1.1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            animation: slideIn 0.3s ease, fadeOut 0.5s 2.5s forwards;
+            z-index: 9999;
+            max-width: 300px;
+            word-break: break-word;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        .msg.user { justify-content: flex-end; }
+        .bubble {
+            max-width: 75%;
+            padding: 0.65rem 1rem;
+            border-radius: 1.2rem;
+            line-height: 1.6;
+            font-size: 0.9rem;
+            word-break: break-word;
+        }
+        .user .bubble {
+            background: #dcedff;
+            border-bottom-right-radius: 0.3rem;
+        }
+        .assistant .bubble {
+            background: #fff;
+            border: 1px solid #e8e8e8;
+            border-bottom-left-radius: 0.3rem;
+        }
+        .input-area {
+            padding: 1rem 1.5rem;
+            background: #fff;
+            border-top: 1px solid #e0e3e7;
+            display: flex;
+            gap: 0.6rem;
+        }
+        #chatInput {
+            flex: 1;
+            padding: 0.7rem 1rem;
+            border: 1px solid #d5d8de;
+            border-radius: 2rem;
+            outline: none;
+            font-size: 0.9rem;
+        }
+        #chatInput:focus { border-color: #4a90e2; }
+        #sendBtn {
+            padding: 0.7rem 1.5rem;
+            background: #4a90e2;
+            color: #fff;
+            border: none;
+            border-radius: 2rem;
+            cursor: pointer;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        #sendBtn:disabled { background: #b0c4de; cursor: not-allowed; }
+        .empty-state { color: #bbb; text-align: center; margin-top: 4rem; font-size: 0.95rem; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ==================== 侧边栏 ==================== -->
+<aside class="sidebar">
+    <h3>🏠 Homer</h3>
+    <button class="btn btn-new" onclick="newChat()">＋ 新对话</button>
+
+    <div class="section-label">历史会话</div>
+    <ul class="session-list" id="sessionList"></ul>
+
+    <hr>
+
+    <div class="section-label">📷 摄像头</div>
+    <button class="btn btn-camera" id="cameraBtn" onclick="toggleCamera()">开启摄像头</button>
+    <div class="status-text" id="cameraStatus">未启动</div>
+</aside>
+
+<!-- ==================== 主聊天区 ==================== -->
+<main class="main">
+    <div class="chat-header" id="sessionLabel">当前会话：新对话</div>
+    <div class="chat-messages" id="chatMessages">
+        <div class="empty-state">✨ 开始对话吧～</div>
+    </div>
+    <div class="input-area">
+        <input type="text" id="chatInput" placeholder="输入消息..." autocomplete="off">
+        <button id="sendBtn" onclick="send()">发送</button>
+    </div>
+</main>
+
+<script>
+// ==================== 状态 ====================
+const state = {
+    sessionId: new Date().toISOString().replace(/[:.]/g, '_'),
+    messages: [],       // [{role, content}]
+    isLoading: false
+};
+
+// ==================== DOM ====================
+const sessionList = document.getElementById('sessionList');
+const sessionLabel = document.getElementById('sessionLabel');
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const sendBtn = document.getElementById('sendBtn');
+
+// ==================== 会话列表 ====================
+async function loadSessions() {
+    const resp = await fetch('/api/sessions');
+    const sessions = await resp.json();
+    sessionList.innerHTML = '';
+    sessions.forEach(name => {
+        const li = document.createElement('li');
+        li.className = 'session-item' + (name === state.sessionId ? ' active' : '');
+        li.innerHTML = `<span class="session-name">${name.slice(0, 20)}</span>`;
+        li.querySelector('.session-name').onclick = () => loadSession(name);
+        const del = document.createElement('button');
+        del.className = 'del-btn';
+        del.textContent = '×';
+        del.onclick = (e) => { e.stopPropagation(); deleteSession(name); };
+        li.appendChild(del);
+        sessionList.appendChild(li);
+    });
+}
+
+async function loadSession(name) {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(name)}`);
+    if (!resp.ok) return alert('加载失败');
+    const data = await resp.json();
+    state.sessionId = name;
+    state.messages = data.messages || [];
+    sessionLabel.textContent = `当前会话：${name.slice(0, 30)}`;
+    renderMessages();
+    loadSessions();
+}
+
+async function deleteSession(name) {
+    if (!confirm('删除此会话？')) return;
+    await fetch(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (state.sessionId === name) newChat();
+    loadSessions();
+}
+
+function newChat() {
+    state.sessionId = new Date().toISOString().replace(/[:.]/g, '_');
+    state.messages = [];
+    sessionLabel.textContent = '当前会话：新对话';
+    renderMessages();
+    loadSessions();
+}
+
+// ==================== 消息渲染 ====================
+function renderMessages() {
+    chatMessages.innerHTML = '';
+    if (!state.messages.length) {
+        chatMessages.innerHTML = '<div class="empty-state">✨ 开始对话吧～</div>';
+        return;
+    }
+    state.messages.forEach(m => addBubble(m.role, m.content));
+    scrollBottom();
+}
+
+function addBubble(role, content) {
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    div.innerHTML = `<div class="bubble">${escapeHtml(content)}</div>`;
+    chatMessages.appendChild(div);
+    return div.querySelector('.bubble');
+}
+
+function escapeHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function scrollBottom() {
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// ==================== 发送消息（流式） ====================
+async function send() {
+    const text = chatInput.value.trim();
+    if (!text || state.isLoading) return;
+
+    // 禁用输入
+    state.isLoading = true;
+    sendBtn.disabled = true;
+    chatInput.disabled = true;
+
+    // 添加用户消息
+    state.messages.push({ role: 'user', content: text });
+    addBubble('user', text);
+    chatInput.value = '';
+
+    // 添加助手占位
+    const assistantBubble = addBubble('assistant', '思考中...');
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: state.sessionId,
+                message: text
+            })
+        });
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullContent = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // 按行分割，处理 SSE 协议
+            const lines = buffer.split('\n');
+            // 最后一个可能是不完整的行，保留在 buffer
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const jsonStr = line.slice(6).trim();
+                if (!jsonStr) continue;
+
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.c) {
+                        // 每个词元追加显示
+                        fullContent += data.c;
+                        assistantBubble.textContent = fullContent;
+                        scrollBottom();
+                    }
+                    if (data.done) {
+                        // 流结束 → 更新 state
+                        // 检查是否已经存在这条助手消息（避免重复）
+                        const lastMsg = state.messages[state.messages.length - 1];
+                        if (lastMsg && lastMsg.role === 'assistant') {
+                            lastMsg.content = fullContent;
+                        } else {
+                            state.messages.push({ role: 'assistant', content: fullContent });
+                        }
+                    }
+                } catch (e) {
+                    // 非 JSON 行，忽略
+                }
+            }
+        }
+
+        // 兜底：如果流中没有 done 标记，在这里更新
+        if (fullContent) {
+            const lastMsg = state.messages[state.messages.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant') {
+                lastMsg.content = fullContent;
+            } else {
+                state.messages.push({ role: 'assistant', content: fullContent });
+            }
+        } else {
+            assistantBubble.textContent = '（无回复）';
+        }
+
+    } catch (e) {
+        assistantBubble.textContent = '网络错误，请重试 😥';
+        state.messages.push({ role: 'assistant', content: '网络错误，请重试 😥' });
+    } finally {
+        state.isLoading = false;
+        sendBtn.disabled = false;
+        chatInput.disabled = false;
+        chatInput.focus();
+        loadSessions();  // 刷新列表
+    }
+}
+
+// ==================== 摄像头控制 ====================
+async function toggleCamera() {
+    const btn = document.getElementById('cameraBtn');
+    const statusEl = document.getElementById('cameraStatus');
+
+    let resp = await fetch('/api/camera/status');
+    let data = await resp.json();
+
+    if (data.running) {
+        // 关闭
+        await fetch('/api/camera/stop', { method: 'POST' });
+        btn.textContent = '开启摄像头';
+        btn.classList.remove('running');
+        statusEl.textContent = '未启动';
+    } else {
+        // 开启
+        await fetch('/api/camera/start', { method: 'POST' });
+        btn.textContent = '关闭摄像头';
+        btn.classList.add('running');
+        statusEl.textContent = '运行中';
+    }
+}
+
+// 展示提醒泡泡（自动3秒消失）
+function showReminderBubble(text) {
+    const bubble = document.createElement('div');
+    bubble.className = 'reminder-bubble';
+    bubble.textContent = text;
+    document.body.appendChild(bubble);
+    setTimeout(() => {
+        if (bubble.parentNode) {
+            bubble.parentNode.removeChild(bubble);
+        }
+    }, 30000);
+}
+
+// 定时轮询提醒接口
+setInterval(async () => {
+    try {
+        const res = await fetch('/api/camera/reminders');
+        const data = await res.json();
+        if (data.reminders && data.reminders.length > 0) {
+            data.reminders.forEach(text => showReminderBubble(text));
+        }
+    } catch (e) {
+        // 静默失败
+    }
+}, 20000);  // 每2秒检查一次
+
+// 输入框回车发送
+chatInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+    }
+});
+
+// ==================== 初始化 ====================
+async function init() {
+    // 检查摄像头状态
+    try {
+        let resp = await fetch('/api/camera/status');
+        let data = await resp.json();
+        const btn = document.getElementById('cameraBtn');
+        const statusEl = document.getElementById('cameraStatus');
+        if (data.running) {
+            btn.textContent = '关闭摄像头';
+            btn.classList.add('running');
+            statusEl.textContent = '运行中';
+        }
+    } catch(e) {}
+
+    loadSessions();
+    renderMessages();
+}
+init();
+</script>
+</body>
+</html>
