@@ -5,7 +5,7 @@ LangChain Agent 管理器（新版超简洁版）
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
 import config
-from memory.tools import ALL_TOOLS
+from Agent.tools import ALL_TOOLS
 
 _agent = None
 

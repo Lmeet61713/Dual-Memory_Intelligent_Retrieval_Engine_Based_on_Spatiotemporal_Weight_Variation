@@ -13,13 +13,13 @@ from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
-from decision.Peronal_manager import PersonalManager
+from decision.personal.Peronal_manager import PersonalManager
 from memory.semantic_memory import check_and_close_segment
 import uvicorn
 import config
 from application.data_exporter import DataExporter
-from memory.agent import get_agent
-from memory.tool_context import ToolContext, set_current_context, clear_current_context
+from Agent.agent import get_agent
+from Agent.tool_context import ToolContext, set_current_context, clear_current_context
 from langchain_core.messages import HumanMessage, AIMessage
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
