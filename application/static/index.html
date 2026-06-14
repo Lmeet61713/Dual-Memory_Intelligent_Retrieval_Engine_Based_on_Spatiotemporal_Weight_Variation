@@ -93,6 +93,81 @@
 
         hr { border: none; border-top: 1px solid #eee; margin: 0.8rem 0; }
 
+        /* 画像面板 */
+        .persona-panel {
+            margin-top: 0.3rem;
+            font-size: 0.8rem;
+        }
+        .persona-feature-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        .persona-feature-row:hover { background: #f7f9ff; }
+        .persona-feature-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.78rem;
+        }
+        .persona-feature-bar {
+            width: 60px;
+            height: 4px;
+            background: #e8e8e8;
+            border-radius: 2px;
+            margin: 0 0.5rem;
+            flex-shrink: 0;
+        }
+        .persona-feature-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #a0d2db, #4a90e2);
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        .persona-feature-conf {
+            font-size: 0.7rem;
+            color: #888;
+            width: 36px;
+            text-align: right;
+            flex-shrink: 0;
+        }
+        .persona-del-btn {
+            background: none;
+            border: none;
+            color: #ccc;
+            cursor: pointer;
+            font-size: 0.8rem;
+            padding: 0 0.2rem;
+            flex-shrink: 0;
+            transition: color 0.2s;
+        }
+        .persona-del-btn:hover { color: #e74c3c; }
+        .persona-toggle {
+            background: none;
+            border: none;
+            color: #4a90e2;
+            cursor: pointer;
+            font-size: 0.72rem;
+            padding: 0.3rem 0;
+            width: 100%;
+            text-align: left;
+        }
+        .persona-toggle:hover { text-decoration: underline; }
+        .persona-detail {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 0.3rem;
+        }
+        .persona-empty {
+            color: #bbb;
+            font-size: 0.75rem;
+            text-align: center;
+            padding: 0.5rem 0;
+        }
+
         /* 摄像头 */
         .btn-camera {
             background: #fff;
@@ -225,6 +300,19 @@
 
     <div class="section-label">历史会话</div>
     <ul class="session-list" id="sessionList"></ul>
+
+    <hr>
+        <!-- ==================== 用户画像 ==================== -->
+    <div class="section-label">🧠 用户画像</div>
+    <div class="persona-panel" id="personaPanel">
+        <div id="personaFeatures"></div>
+        <button class="persona-toggle" id="personaToggleBtn" onclick="togglePersonaDetail()" style="display:none">
+            展开全部特征 ▾
+        </button>
+        <div class="persona-detail" id="personaDetail" style="display:none"></div>
+    </div>
+    <div class="status-text" id="personaStatus"></div>
+
 
     <hr>
 
@@ -427,6 +515,7 @@ async function send() {
         chatInput.disabled = false;
         chatInput.focus();
         loadSessions();  // 刷新列表
+        loadPersona();  // 每次对话后刷新画像
     }
 }
 
@@ -487,6 +576,116 @@ chatInput.addEventListener('keydown', e => {
     }
 });
 
+// ==================== 画像加载 ====================
+const DIM_CN = {
+    "personality_traits": "性格",
+    "interests": "兴趣",
+    "values": "价值观",
+    "communication_style": "沟通",
+    "habits": "习惯"
+};
+
+async function loadPersona() {
+    const resp = await fetch(`/api/persona/${encodeURIComponent(state.sessionId)}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderPersona(data);
+}
+
+function renderPersona(data) {
+    const featuresDiv = document.getElementById('personaFeatures');
+    const detailDiv = document.getElementById('personaDetail');
+    const toggleBtn = document.getElementById('personaToggleBtn');
+    const statusEl = document.getElementById('personaStatus');
+
+    // 收集所有特征，扁平化
+    const allFeatures = [];
+    for (const [dim, items] of Object.entries(data.persona)) {
+        for (const item of items) {
+            allFeatures.push({
+                dim: dim,
+                dim_cn: DIM_CN[dim] || dim,
+                feature: item.feature,
+                confidence: item.confidence
+            });
+        }
+    }
+
+    // 按置信度降序
+    allFeatures.sort((a, b) => b.confidence - a.confidence);
+
+    if (allFeatures.length === 0) {
+        featuresDiv.innerHTML = '<div class="persona-empty">暂无画像特征</div>';
+        detailDiv.innerHTML = '';
+        toggleBtn.style.display = 'none';
+        statusEl.textContent = '';
+        return;
+    }
+
+    statusEl.textContent = `共 ${data.total_features} 个特征`;
+
+    // 前5个显示在主区域
+    const top = allFeatures.slice(0, 5);
+    featuresDiv.innerHTML = '';
+    top.forEach(f => {
+        featuresDiv.appendChild(createFeatureRow(f));
+    });
+
+    // 剩下的放在折叠区
+    const rest = allFeatures.slice(5);
+    if (rest.length > 0) {
+        toggleBtn.style.display = 'block';
+        toggleBtn.textContent = `展开全部特征 (${rest.length}个) ▾`;
+        detailDiv.innerHTML = '';
+        rest.forEach(f => {
+            detailDiv.appendChild(createFeatureRow(f));
+        });
+    } else {
+        toggleBtn.style.display = 'none';
+        detailDiv.innerHTML = '';
+    }
+}
+
+function createFeatureRow(f) {
+    const row = document.createElement('div');
+    row.className = 'persona-feature-row';
+    row.innerHTML = `
+        <span class="persona-feature-name" title="${f.feature}">${f.dim_cn}·${f.feature}</span>
+        <div class="persona-feature-bar">
+            <div class="persona-feature-fill" style="width:${(f.confidence * 100).toFixed(0)}%"></div>
+        </div>
+        <span class="persona-feature-conf">${(f.confidence * 100).toFixed(0)}%</span>
+        <button class="persona-del-btn" title="删除此特征">×</button>
+    `;
+    // 删除按钮事件
+    row.querySelector('.persona-del-btn').onclick = async (e) => {
+        e.stopPropagation();
+        await fetch(`/api/persona/${encodeURIComponent(state.sessionId)}/${encodeURIComponent(f.dim)}/${encodeURIComponent(f.feature)}`, { method: 'DELETE' });
+        loadPersona();
+    };
+    return row;
+}
+
+function togglePersonaDetail() {
+    const detail = document.getElementById('personaDetail');
+    const btn = document.getElementById('personaToggleBtn');
+    if (detail.style.display === 'none') {
+        detail.style.display = 'block';
+        btn.textContent = btn.textContent.replace('▾', '▴');
+    } else {
+        detail.style.display = 'none';
+        btn.textContent = btn.textContent.replace('▴', '▾');
+    }
+}
+
+// 在 loadSessions 之后调用
+async function initPersona() {
+    await loadPersona();
+}
+
+// 在 send() 函数末尾（流式回复完成后）刷新画像
+// 在 finally 块末尾加一句：loadPersona();
+
 // ==================== 初始化 ====================
 async function init() {
     // 检查摄像头状态
@@ -504,6 +703,7 @@ async function init() {
 
     loadSessions();
     renderMessages();
+    await initPersona();
 }
 init();
 </script>
