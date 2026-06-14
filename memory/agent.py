@@ -9,16 +9,12 @@ from memory.tools import ALL_TOOLS
 
 _agent = None
 
-def get_agent():
-    """获取全局 Agent 单例"""
-    global _agent
-    if _agent is None:
-        # 初始化模型，自动读取环境变量 DEEPSEEK_API_KEY
-        model = init_chat_model(model="deepseek-chat")
-        # 创建智能体，传入系统提示词和工具列表
-        _agent = create_agent(
-            model=model,
-            tools=ALL_TOOLS,
-            system_prompt=config.AGENT_SYSTEM_PROMPT,
-        )
-    return _agent
+def get_agent(system_prompt: str = None):
+    if system_prompt is None:
+        system_prompt = config.AGENT_SYSTEM_PROMPT
+    model = init_chat_model(model="deepseek-chat")
+    return create_agent(
+        model=model,
+        tools=ALL_TOOLS,
+        system_prompt=system_prompt
+    )
