@@ -22,7 +22,10 @@ for d in [DATA_DIR, MEMORY_DIR, SPACE_DIR, VECTORS_DIR, ABSTRACT_DIR, PERSONA_DI
 # 具体文件
 SPATIAL_MEMORY_FILE = os.path.join(SPACE_DIR, "spatial_memory.json")
 CONFIDENCE_STATE_FILE = os.path.join(SPACE_DIR, "confidence_state.json")
+ITEM_TRAJECTORIES_FILE = os.path.join(SPACE_DIR, "item_trajectories.json")
+ITEM_HABITS_SUMMARY_FILE = os.path.join(SPACE_DIR, "item_habits_summary.json")
 SEMANTIC_SESSION_FILE = os.path.join(MEMORY_DIR, "chat_sessions.json")
+# ITEM_HABIT_DATA_FILE = os.path.join(DATA_DIR, "item_habit_data.json")
 
 # 模型
 YOLO_MODEL_PATH_GLOBAL = os.path.join(BASE_DIR, "models", "best_global.pt")
@@ -43,7 +46,7 @@ CAM_FRAME_HEIGHT_ = 480
 # 检测与匹配
 # ========================================
 DETECTION_CONF_THRESHOLD = 0.4   # YOLO 检测置信度阈值
-MOVE_THRESHOLD_PIXELS = 0.2       # 坐标变化超过5厘米 → 判定为移动
+MOVE_THRESHOLD_PIXELS = 1        # 移动距离阈值（像素）
 REF_DISTANCE_THRESHOLD = 200     # 参照物判定距离（像素）
 
 # ========================================
@@ -204,3 +207,13 @@ RETRIEVAL_MIN_SIMILARITY = 0.45      # 语义检索命中最低相似度
 PERSONA_DECAY_INTERVAL = 2
 PERSONA_REWARD_INCREMENT = 0.03
 PERSONA_DECAY_DECREMENT = 0.05
+
+# ========================================
+# 物品使用习惯分析配置
+# ========================================
+ITEM_HABIT_DATA_FILE = os.path.join(DATA_DIR, "item_histories.json")      # 物品历史记录文件
+ITEM_HABIT_ANALYSIS_RESULT_FILE = os.path.join(PERSONA_DIR, "item_habits.json")  # 分析结果摘要
+ITEM_HABIT_ANALYSIS_INTERVAL = 300         # 分析周期（秒），需双摄运行
+ITEM_HISTORY_MAX_PER_ITEM = 10            # 单物品最大历史记录数，超出则压缩
+ITEM_HABIT_MAX_SUMMARIES = 50              # 最大习惯摘要数量
+ITEM_HABIT_SIMILARITY_THRESHOLD = 0.75     # 摘要相似度合并阈值

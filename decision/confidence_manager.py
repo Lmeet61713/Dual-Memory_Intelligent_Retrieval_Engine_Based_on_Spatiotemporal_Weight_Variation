@@ -12,6 +12,7 @@ from typing import Optional
 import config
 import time
 from decision.high_weight_reminder import ReminderManager
+from decision.personal.item_habit_analyzer import get_habit_manager
 from memory.semantic_memory import get_model   # 共享单例，无额外开销
 
 
@@ -31,7 +32,7 @@ class ConfidenceManager:
     def __init__(self):
         self._items: dict = {}               # key: (class_name, space_id) → item dict
         self._last_forget_check = None       # 保留字段，消失检查已改为 check_missing
-        self.reminder = ReminderManager()   # 高权重提醒表，暂不启用
+        self.reminder = ReminderManager()
         self._load()
 
     # ==================== 持久化 ====================
@@ -60,6 +61,9 @@ class ConfidenceManager:
             self._items = {}
 
     def _save(self):
+        """
+        保存物品状态
+        """
         serializable = {}
         for k, v in self._items.items():
             key_str = f"{k[0]}|{k[1]}"
@@ -127,6 +131,10 @@ class ConfidenceManager:
         self._save()
         self._sync_spatial_memory()
 
+        # ★ 新增：记录物品历史轨迹（供习惯分析）
+        habit_mgr = get_habit_manager()     # 物品习惯管理器
+        habit_mgr.record_observation(class_name, space_id, list(new_coord))
+
     # ==================== 奖励/衰减子函数 ====================
     def _apply_reward(self, key, reason="移动"):
         old_w = self._items[key].get('weight', config.INITIAL_WEIGHT)       # 物品当前权重
@@ -172,7 +180,7 @@ class ConfidenceManager:
         self._save()
         self._sync_spatial_memory()
 
-    # ==================== 提醒阈值检查（暂时禁用） ====================
+    # ==================== 提醒阈值检查 ====================
     def _check_reminder_threshold(self, name: str, weight: float):
         if weight >= config.HIGH_WEIGHT_THRESHOLD:
             self.reminder.add(name)
@@ -214,6 +222,10 @@ class ConfidenceManager:
 
     # ==================== 查询接口 ====================
     def get_all_items(self) -> list:
+        """
+        获取所有物品信息。
+        返回列表中每个物品的字典。
+        """
         return [
             {
                 'name': item['name'],
@@ -231,6 +243,10 @@ class ConfidenceManager:
         ]
 
     def get_item(self, class_name: str, space_id: int = 0) -> Optional[dict]:
+        """
+        获取物品信息。
+        返回 None 表示物品不存在。
+        """
         key = (class_name, space_id)
         item = self._items.get(key)
         if item:
@@ -247,3 +263,65 @@ class ConfidenceManager:
                 'last_seen': item.get('last_seen', 0)
             }
         return None
+
+
+
+# ==================== 纯内存自测试（不生成任何文件） ====================
+if __name__ == '__main__':
+
+    # 直接改类的方法，让对应函数为空
+    # 屏蔽所有持久化和外部依赖，只在内存中测试核心逻辑
+    ConfidenceManager._save = lambda self: print("修改函数方法为打印本句。")         # 已经包含了实例化了，两步合成一步
+    ConfidenceManager._sync_spatial_memory = lambda self: None
+
+    # 屏蔽get_habit_manager里创建其他文件
+    get_habit_manager().__class__.record_observation = lambda self, *a, **kw: None
+
+
+    def show_item(cm, name):
+        item = cm.get_item(name)
+        if item:
+            print(f"  {item['name']}: 权重={item['weight']:.2f}  步数={item['step']}  坐标={item['located']}")
+        else:
+            print(f"  {name} 不存在")
+
+    # ===== 测试1：移动奖励 =====
+    print("=" * 50)
+    print("测试1：移动奖励（坐标变化 > MOVE_THRESHOLD_PIXELS）")
+    cm = ConfidenceManager()
+    cm.process_observation("水杯", located=[100, 100], yolo_confidence=0.7)
+    show_item(cm, "水杯")
+
+    cm.process_observation("水杯", located=[105, 100])   # dx > 0.2 → 奖励
+    show_item(cm, "水杯")
+
+    cm.process_observation("水杯", located=[105, 105])   # dy > 0.2 → 奖励
+    show_item(cm, "水杯")
+    print()
+
+    # ===== 测试2：静止衰减 =====
+    print("=" * 50)
+    print("测试2：静止衰减（连续静止，步数累积触发衰减）")
+    cm = ConfidenceManager()
+    cm.process_observation("遥控器", located=[50, 50])
+    show_item(cm, "遥控器")
+
+    for i in range(1, config.DECAY_COUNTER_MAX + 2):
+        cm.process_observation("遥控器", located=[50, 50])  # 坐标不变
+        print(f"第{i}次静止观测: ", end="")
+        show_item(cm, "遥控器")
+    print()
+
+    # ===== 测试3：消失衰减 =====
+    print("=" * 50)
+    print("测试3：消失衰减（超过 CHECK_INTERVAL 未观测）")
+    cm = ConfidenceManager()
+    cm.process_observation("书本", located=[200, 200])
+    show_item(cm, "书本")
+
+    # 手动将 last_seen 改到 30 秒前，模拟长时间未观测
+    cm._items[("书本", 0)]["last_seen"] = time.time() - (config.CHECK_INTERVAL + 5)
+    cm.check_missing(time.time())
+    print("触发消失衰减后: ", end="")
+    show_item(cm, "书本")
+    print()

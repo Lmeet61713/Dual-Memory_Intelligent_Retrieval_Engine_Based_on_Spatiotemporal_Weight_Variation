@@ -174,12 +174,19 @@ async def chat(request: Request):
             lc_messages.append(AIMessage(content=msg["content"]))
 
     # ========== 6. Agent 流式生成 ==========
-    # 在设置 tool_context 之后，Agent 调用之前
+
     persona_mgr = PersonalManager(session_id=session_id)
     persona_summary = persona_mgr.update_and_get_summary(all_messages, current_turn)
 
+    # ★ 获取物品使用习惯摘要
+    from decision.personal.item_habit_analyzer import get_habit_manager
+    habit_mgr = get_habit_manager()
+    habit_section = habit_mgr.get_formatted_for_prompt()
+
     # 动态拼接最终系统提示
     dynamic_system = config.AGENT_SYSTEM_PROMPT + "\n\n" + persona_summary
+    if habit_section:
+        dynamic_system += "\n\n" + habit_section
 
     agent = get_agent(dynamic_system)  # 需要让 agent.py 支持传入 system_prompt
 

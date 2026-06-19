@@ -1,6 +1,7 @@
 # memory/agent.py
 """
-LangChain Agent 管理器（新版超简洁版）
+LangChain Agent 管理器（新版）
+支持注入物品习惯摘要
 """
 from langchain.chat_models import init_chat_model
 from langchain.agents import create_agent
