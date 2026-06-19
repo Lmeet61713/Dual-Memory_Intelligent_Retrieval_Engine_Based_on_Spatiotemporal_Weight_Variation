@@ -1,7 +1,4 @@
-# memory/tools.py
-"""
-LangChain Tool 封装 —— 空间/语义检索工具 (支持多候选查询与耗时统计)
-"""
+
 import time
 from typing import List
 from pydantic import BaseModel, Field
@@ -9,8 +6,6 @@ from langchain.tools import tool
 from memory.spatial_memory import run_spatial_tool
 from memory.semantic_memory import run_semantic_tool
 from Agent.tool_context import get_current_context
-
-
 # ---------- 参数模型：空间检索 ----------
 class SpatialSearchInput(BaseModel):
     queries: List[str] = Field(

@@ -10,9 +10,10 @@ from datetime import datetime, timedelta
 import config
 
 
+
 class ReminderManager:
     def __init__(self):
-        self._reminders: dict = {}
+        self._reminders: dict = {}      # "水杯": {"name": "水杯", "added_at": "...", ...}
         self._load()
 
     # ==================== 持久化 ====================
@@ -62,7 +63,7 @@ class ReminderManager:
         last_str = entry.get("last_triggered")
         if last_str:
             last_time = datetime.strptime(last_str, "%Y-%m-%d %H:%M:%S")
-            if datetime.now() - last_time < timedelta(seconds=config.REMINDER_COOLDOWN_SECONDS):
+            if (datetime.now() - last_time) < timedelta(seconds=config.REMINDER_COOLDOWN_SECONDS):    # timedelta作用是减去一个时间间隔
                 return None  # 冷却中
 
         # 触发提醒
@@ -71,3 +72,30 @@ class ReminderManager:
         reminder_text = f"这里有一个{name}"
         print(f"[ReminderManager] 🛎️ 触发提醒: {reminder_text}")
         return reminder_text
+
+
+if __name__ == "__main__":
+    # 禁用文件读写
+    ReminderManager._load = lambda self: None
+    ReminderManager._save = lambda self: None
+
+    rm = ReminderManager()
+
+    # ---- 1. 基本增删 ----
+    rm.add("水杯")
+    assert "水杯" in rm._reminders, "添加失败"
+    rm.remove("水杯")
+    assert "水杯" not in rm._reminders, "删除失败"
+    rm.add("粉笔")
+    assert "粉笔" in rm._reminders, "添加失败"
+
+    # ---- 2. 未添加则触发返回 None ----
+    assert rm.try_trigger("遥控器") is None
+
+    # ---- 3. 正常触发（刚添加后应该立刻提醒） ----
+    rm.add("遥控器")
+    result = rm.try_trigger("遥控器")
+    assert result == "这里有一个遥控器", f"第一次触发失败: {result}"
+
+
+    print("✅ 所有测试通过！")

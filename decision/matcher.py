@@ -17,6 +17,10 @@ import config
 from perception.camera_stream import GlobalCamera, MobileCamera
 from perception.yolo_detector import YOLODetector
 from decision.confidence_manager import ConfidenceManager
+from decision.personal.item_habit_analyzer import get_habit_manager
+from decision.high_weight_reminder import ReminderManager
+from unittest.mock import patch, MagicMock
+
 
 class Matcher:
     def __init__(self):
@@ -50,6 +54,11 @@ class Matcher:
 
         self._stop_event = threading.Event()
 
+        # ★ 物品习惯分析线程
+        self._habit_analysis_thread = None
+        self._habit_stop_event = threading.Event()
+        self._last_habit_analysis_time = 0.0
+
     @property
     def is_running(self):
         return self._running
@@ -77,20 +86,38 @@ class Matcher:
         if self._running:
             print("[Matcher] 已在运行中")
             return
+        self._stop_event.clear()        # clear()的作用是将事件对象置为未设置状态。
+        self._habit_stop_event.clear()
         self._running = True
         self.global_cam.start()
         self.mobile_cam.start()
         threading.Thread(target=self._camera_loop, args=("global",), daemon=True).start()
         threading.Thread(target=self._camera_loop, args=("mobile",), daemon=True).start()
         threading.Thread(target=self._save_loop, daemon=True).start()
-        print(f"[Matcher] 已启动 | 检测间隔:{self.DETECT_INTERVAL}帧 | 匹配置信度阈值:{self.MATCH_CONF}")
+        # ★ 启动物品习惯分析线程
+        self._habit_analysis_thread = threading.Thread(target=self._habit_analysis_loop, daemon=True)
+        self._habit_analysis_thread.start()
+        print(f"[Matcher] 已启动 | 检测间隔:{self.DETECT_INTERVAL}帧 | 匹配置信度阈值:{self.MATCH_CONF} | 习惯分析间隔:{config.ITEM_HABIT_ANALYSIS_INTERVAL}s")
 
     def stop(self):
         if not self._running:
             return
         self._running = False
         time.sleep(0.5)
-        self.conf_manager._sync_spatial_memory()
+        # ★ 停止习惯分析线程
+        self._habit_stop_event.set()
+        if self._habit_analysis_thread:
+            self._habit_analysis_thread.join(timeout=5)
+        # 最后强制保存历史并执行一次分析
+        try:
+            habit_mgr = get_habit_manager()
+            habit_mgr.store.force_save()
+            count = habit_mgr.run_analysis()
+            if count > 0:
+                print(f"[Matcher] 停止前完成最后一次习惯分析，更新 {count} 条摘要")
+        except Exception as e:
+            print(f"[Matcher] 最后一次习惯分析失败: {e}")
+        self.conf_manager._sync_spatial_memory()        # 同步空间
         self.global_cam.stop()
         self.mobile_cam.stop()
         self._stop_event.set()
@@ -242,3 +269,98 @@ class Matcher:
             reminders = self._pending_reminders[:]
             self._pending_reminders.clear()
         return reminders
+
+    # ==================== 物品习惯分析循环 ====================
+    def _habit_analysis_loop(self):
+        """
+        物品使用习惯分析后台线程。
+        每 config.ITEM_HABIT_ANALYSIS_INTERVAL 秒检查一次，仅当双摄都在运行时执行分析。
+        """
+        print(f"[HabitAnalysis] 习惯分析线程已启动，间隔={config.ITEM_HABIT_ANALYSIS_INTERVAL}s")
+        while not self._habit_stop_event.is_set():
+            # 等待达到分析间隔
+            self._habit_stop_event.wait(config.ITEM_HABIT_ANALYSIS_INTERVAL)
+            if self._habit_stop_event.is_set():
+                break
+
+            # 前提条件：双摄都在运行（通过 self._running 判断）
+            if not self._running:
+                continue
+
+            try:
+                habit_mgr = get_habit_manager()
+                habit_mgr.store.force_save()  # 分析前先持久化最新历史
+                updated = habit_mgr.run_analysis()
+                if updated > 0:
+                    print(f"[HabitAnalysis] 本轮习惯分析完成，更新/新增 {updated} 条摘要")
+                else:
+                    print("[HabitAnalysis] 本轮无数据变化，跳过")
+            except Exception as e:
+                print(f"[HabitAnalysis] 分析过程异常: {e}")
+
+
+
+# ==================== 测试入口 ====================
+if __name__ == '__main__':
+
+    # 1. 禁用所有文件读写和模型加载
+    with patch.object(ConfidenceManager, '_load', lambda self: None), \
+         patch.object(ConfidenceManager, '_save', lambda self: None), \
+         patch.object(ConfidenceManager, '_sync_spatial_memory', lambda self: None), \
+         patch.object(ReminderManager, '_load', lambda self: None), \
+         patch.object(ReminderManager, '_save', lambda self: None), \
+         patch('decision.confidence_manager.get_habit_manager', return_value=MagicMock()):
+
+        # 2. 创建 Matcher（不调用 start，摄像头不会启动）
+        matcher = Matcher()
+
+
+        # 3. 修改提醒触发逻辑：一旦匹配到高权重物品就打印指定消息
+        original_try_trigger = matcher.conf_manager.reminder.try_trigger
+        def fake_try_trigger(name: str):
+
+            return original_try_trigger(name)    # 保留原逻辑（可选）
+        matcher.conf_manager.reminder.try_trigger = fake_try_trigger
+
+        # 4. 预置一个高权重物品，保证匹配后触发提醒
+        matcher.conf_manager._items[('水杯', 0)] = {
+            'name': '水杯',
+            'space_id': 0,
+            'located': [0, 0],
+            'timestamp': '2025-01-01 00:00:00',
+            'last_seen': 999999,
+            'references': [],
+            'features': '',
+            'confidence': 0.9,
+            'weight': 0.9,          # 高于 HIGH_WEIGHT_THRESHOLD=0.8
+            'step': 0
+        }
+
+        # 5. 构造两组同名、不同位置的检测数据（模拟双摄结果）
+        global_dets = [
+            {
+                'class_name': '水杯',
+                'confidence': 0.9,
+                'center_pixel': (320, 240),
+                'center_physical': (20.0, 15.0),
+                'box': [300, 220, 340, 260]
+            }
+        ]
+        mobile_dets = [
+            {
+                'class_name': '水杯',
+                'confidence': 0.85,
+                'center_pixel': (200, 300),
+                'center_physical': None,
+                'box': [180, 280, 220, 320]
+            }
+        ]
+
+        # 6. 注入到 Matcher 的保护数据中（模拟线程获取的检测结果）
+        with matcher._lock:
+            matcher._global_dets = global_dets
+            matcher._mobile_dets = mobile_dets
+
+        # 7. 执行核心匹配函数
+        print("开始测试 _match_and_update ...")
+        matcher._match_and_update()
