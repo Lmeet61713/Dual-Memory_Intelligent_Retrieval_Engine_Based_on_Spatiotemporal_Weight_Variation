@@ -1,8 +1,9 @@
 # decision/confidence_manager.py
 """
-权重管理器（重构版）
+权重管理器（步进式 + 遗忘曲线衰减）
 - 接收 matcher 传来的观测结果
 - 移动奖励 / 静止衰减 / 消失衰减 三线管理
+- 衰减量由艾宾浩斯遗忘曲线计算，替代固定 -0.05
 - 持久化到 data/space/，并同步空间记忆
 """
 import json
@@ -16,22 +17,47 @@ from decision.personal.item_habit_analyzer import get_habit_manager
 from memory.semantic_memory import get_model   # 共享单例，无额外开销
 
 
+def _decay_amount(current_weight: float) -> float:
+    """
+    遗忘曲线衰减量：基于当前权重计算本次 CHECK_INTERVAL 周期的衰减幅度。
+
+    生物学原理：记忆越牢固（权重越高），遗忘越慢；
+    记忆越弱（接近下限），衰减越平缓（接近 0）。
+    相当于对 CHECK_INTERVAL 秒应用指数衰减后的减少量。
+    """
+    factor = 0.5 ** (config.CHECK_INTERVAL / config.FORGET_HALF_LIFE)  # 剩余比例
+    new_w = current_weight * factor
+    return max(current_weight - new_w, 0.0)
+
+
+def _boost_amount(current_weight: float) -> float:
+    """
+    移动奖励增长量：接近上限时打折，模拟边际收益递减。
+    """
+    if current_weight >= config.MAX_WEIGHT:
+        return 0.0
+    room = config.MAX_WEIGHT - current_weight
+    if current_weight >= 0.85:
+        # 打折：越接近上限增幅越小
+        return config.WEIGHT_REWARD_INCREMENT * (room / (config.MAX_WEIGHT - 0.85))
+    return config.WEIGHT_REWARD_INCREMENT
+
 
 class ConfidenceManager:
     """
     权重管理
 
     规则：
-    - 物品被双摄观测到，坐标变化 > MOVE_THRESHOLD_PIXELS → 移动奖励 +0.1，步长重置0
-    - 物品被观测到，坐标未变化 → 步长+1；步长达到 DECAY_COUNTER_MAX → 静止衰减 -0.1，步长重置0
-    - 物品超过 CHECK_INTERVAL 秒未被任何观测到 → 消失衰减 -0.1（每30s检查一次）
+    - 物品被双摄观测到，坐标变化 > MOVE_THRESHOLD_PIXELS → 移动奖励，步长重置 0
+    - 物品被观测到，坐标未变化 → 步长+1；步长达到 DECAY_COUNTER_MAX → 静止衰减，步长重置 0
+    - 物品超过 CHECK_INTERVAL 秒未被任何观测到 → 消失衰减（每 20s 检查一次）
     - 新物品初始权重 = INITIAL_WEIGHT (0.5)，步长 0
-    - 高权重提醒功能暂未启用
+    - 衰减量使用遗忘曲线计算，非固定 -0.05
     """
 
     def __init__(self):
         self._items: dict = {}               # key: (class_name, space_id) → item dict
-        self._last_forget_check = None       # 保留字段，消失检查已改为 check_missing
+        self._last_forget_check = None       # 保留字段
         self.reminder = ReminderManager()
         self._load()
 
@@ -45,16 +71,14 @@ class ConfidenceManager:
                 parts = k.split("|")
                 if len(parts) == 2:
                     key = (parts[0], int(parts[1]))
-                    # 兼容旧字段
                     if 'weight' not in v:
                         v['weight'] = config.INITIAL_WEIGHT
                     if 'located' not in v and 'coordinate' in v:
                         v['located'] = v['coordinate']
-                    # last_seen 统一为浮点数时间戳，旧字符串数据设为 None
                     if 'last_seen' not in v:
                         v['last_seen'] = None
                     elif isinstance(v['last_seen'], str):
-                        v['last_seen'] = None  # 无法回溯，视为未观测
+                        v['last_seen'] = None
                     self._items[key] = v
             print(f"[ConfidenceManager] 已加载 {len(self._items)} 条物品状态")
         else:
@@ -75,7 +99,7 @@ class ConfidenceManager:
     def process_observation(
         self,
         class_name: str,
-        located: list,  # 坐标，默认为像素坐标
+        located: list,
         yolo_confidence: float = 0.5,
         features: str = "",
         space_id: int = 0,
@@ -131,26 +155,27 @@ class ConfidenceManager:
         self._save()
         self._sync_spatial_memory()
 
-        # ★ 新增：记录物品历史轨迹（供习惯分析）
-        habit_mgr = get_habit_manager()     # 物品习惯管理器
+        # ★ 记录物品历史轨迹（供习惯分析）
+        habit_mgr = get_habit_manager()
         habit_mgr.record_observation(class_name, space_id, list(new_coord))
 
     # ==================== 奖励/衰减子函数 ====================
     def _apply_reward(self, key, reason="移动"):
-        old_w = self._items[key].get('weight', config.INITIAL_WEIGHT)       # 物品当前权重
-        new_w = min(old_w + config.WEIGHT_REWARD_INCREMENT, config.MAX_WEIGHT)  # 物品新权重
+        old_w = self._items[key].get('weight', config.INITIAL_WEIGHT)
+        boost = _boost_amount(old_w)
+        new_w = min(old_w + boost, config.MAX_WEIGHT)
         self._items[key]['weight'] = round(new_w, 2)
-        self._items[key]['step'] = 0        # 步数归零
+        self._items[key]['step'] = 0
         print(f"[ConfidenceManager] 奖励({reason}): {key[0]} ({old_w:.2f} → {new_w:.2f})")
-        # 高权重提醒阈值检查暂时注释
         self._check_reminder_threshold(key[0], new_w)
 
     def _apply_decay(self, key, reason="静止"):
         old_w = self._items[key].get('weight', config.INITIAL_WEIGHT)
-        new_w = max(old_w - config.WEIGHT_DECAY_DECREMENT, config.MIN_WEIGHT)
+        decay = _decay_amount(old_w)
+        new_w = max(old_w - decay, config.MIN_WEIGHT)
         self._items[key]['weight'] = round(new_w, 2)
         self._items[key]['step'] = 0
-        print(f"[ConfidenceManager] 衰减({reason}): {key[0]} ({old_w:.2f} → {new_w:.2f})")
+        print(f"[ConfidenceManager] 衰减({reason}): {key[0]} ({old_w:.2f} → {new_w:.2f}, 衰减量={decay:.3f})")
         self._check_reminder_threshold(key[0], new_w)
 
     def _apply_static_increment(self, key):
@@ -172,10 +197,11 @@ class ConfidenceManager:
             elapsed = now_ts - last
             if elapsed >= config.CHECK_INTERVAL:
                 old_w = item['weight']
-                new_w = max(old_w - config.MISSING_DECAY_DECREMENT, config.MIN_WEIGHT)
+                decay = _decay_amount(old_w)
+                new_w = max(old_w - decay, config.MIN_WEIGHT)
                 item['weight'] = round(new_w, 2)
                 item['step'] = 0
-                print(f"[消失衰减] {item['name']}: 权重 {old_w:.2f} → {new_w:.2f} (距上次观测 {elapsed:.0f}s)")
+                print(f"[消失衰减] {item['name']}: 权重 {old_w:.2f} → {new_w:.2f} (距上次观测 {elapsed:.0f}s, 衰减量={decay:.3f})")
 
         self._save()
         self._sync_spatial_memory()
@@ -199,7 +225,6 @@ class ConfidenceManager:
             refs = item.get('references', [])
             refs_text = '，'.join(refs) if refs else ''
 
-            # 计算三个维度的向量并转为 list 以便 JSON 存储
             name_vec = model.encode(name, normalize_embeddings=True).tolist() if name else []
             features_vec = model.encode(features, normalize_embeddings=True).tolist() if features else []
             refs_vec = model.encode(refs_text, normalize_embeddings=True).tolist() if refs_text else []
@@ -214,7 +239,6 @@ class ConfidenceManager:
                 'confidence': item.get('confidence', 0),
                 'weight': item.get('weight', 1.0),
                 'step': item.get('step', 0),
-                # ↓ 新增三个向量字段
                 'name_vec': name_vec,
                 'features_vec': features_vec,
                 'refs_vec': refs_vec
@@ -222,10 +246,7 @@ class ConfidenceManager:
 
     # ==================== 查询接口 ====================
     def get_all_items(self) -> list:
-        """
-        获取所有物品信息。
-        返回列表中每个物品的字典。
-        """
+        """获取所有物品信息"""
         return [
             {
                 'name': item['name'],
@@ -243,10 +264,7 @@ class ConfidenceManager:
         ]
 
     def get_item(self, class_name: str, space_id: int = 0) -> Optional[dict]:
-        """
-        获取物品信息。
-        返回 None 表示物品不存在。
-        """
+        """获取物品信息，返回 None 表示不存在"""
         key = (class_name, space_id)
         item = self._items.get(key)
         if item:
@@ -269,12 +287,8 @@ class ConfidenceManager:
 # ==================== 纯内存自测试（不生成任何文件） ====================
 if __name__ == '__main__':
 
-    # 直接改类的方法，让对应函数为空
-    # 屏蔽所有持久化和外部依赖，只在内存中测试核心逻辑
-    ConfidenceManager._save = lambda self: print("修改函数方法为打印本句。")         # 已经包含了实例化了，两步合成一步
+    ConfidenceManager._save = lambda self: print("修改函数方法为打印本句。")
     ConfidenceManager._sync_spatial_memory = lambda self: None
-
-    # 屏蔽get_habit_manager里创建其他文件
     get_habit_manager().__class__.record_observation = lambda self, *a, **kw: None
 
 
@@ -285,41 +299,40 @@ if __name__ == '__main__':
         else:
             print(f"  {name} 不存在")
 
-    # ===== 测试1：移动奖励 =====
+    # ===== 测试1：移动奖励（含接近上限打折） =====
     print("=" * 50)
-    print("测试1：移动奖励（坐标变化 > MOVE_THRESHOLD_PIXELS）")
+    print("测试1：移动奖励（坐标变化 > MOVE_THRESHOLD_PIXELS） + 接近上限打折")
     cm = ConfidenceManager()
     cm.process_observation("水杯", located=[100, 100], yolo_confidence=0.7)
     show_item(cm, "水杯")
 
-    cm.process_observation("水杯", located=[105, 100])   # dx > 0.2 → 奖励
+    cm.process_observation("水杯", located=[105, 100])
     show_item(cm, "水杯")
 
-    cm.process_observation("水杯", located=[105, 105])   # dy > 0.2 → 奖励
+    cm.process_observation("水杯", located=[105, 105])
     show_item(cm, "水杯")
     print()
 
-    # ===== 测试2：静止衰减 =====
+    # ===== 测试2：静止衰减（曲线衰减替代固定 -0.05） =====
     print("=" * 50)
-    print("测试2：静止衰减（连续静止，步数累积触发衰减）")
+    print("测试2：静止衰减（连续静止，步数累积触发衰减，曲线计算替代固定 -0.05）")
     cm = ConfidenceManager()
     cm.process_observation("遥控器", located=[50, 50])
     show_item(cm, "遥控器")
 
     for i in range(1, config.DECAY_COUNTER_MAX + 2):
-        cm.process_observation("遥控器", located=[50, 50])  # 坐标不变
+        cm.process_observation("遥控器", located=[50, 50])
         print(f"第{i}次静止观测: ", end="")
         show_item(cm, "遥控器")
     print()
 
-    # ===== 测试3：消失衰减 =====
+    # ===== 测试3：消失衰减（曲线衰减） =====
     print("=" * 50)
-    print("测试3：消失衰减（超过 CHECK_INTERVAL 未观测）")
+    print("测试3：消失衰减（超过 CHECK_INTERVAL 未观测，曲线计算替代固定 -0.05）")
     cm = ConfidenceManager()
     cm.process_observation("书本", located=[200, 200])
     show_item(cm, "书本")
 
-    # 手动将 last_seen 改到 30 秒前，模拟长时间未观测
     cm._items[("书本", 0)]["last_seen"] = time.time() - (config.CHECK_INTERVAL + 5)
     cm.check_missing(time.time())
     print("触发消失衰减后: ", end="")

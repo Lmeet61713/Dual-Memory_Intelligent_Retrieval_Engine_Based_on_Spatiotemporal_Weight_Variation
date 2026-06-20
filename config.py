@@ -105,10 +105,13 @@ MAX_WEIGHT = 0.99                 # 权重上限
 MIN_WEIGHT = 0.20                 # 权重下限
 
 WEIGHT_REWARD_INCREMENT = 0.1     # 移动一次 → 权重奖励增量
-WEIGHT_DECAY_DECREMENT = 0.05      # 静止衰减一次减少的量
+WEIGHT_DECAY_DECREMENT = 0.05     # 静止衰减 / 消失衰减 基础衰减量
 DECAY_COUNTER_MAX = 3             # 连续未移动达到此次数 → 触发静止衰减（建议3~5）
 
-MISSING_DECAY_DECREMENT = 0.05     # 消失衰减一次减少的量（与静止衰减一致）
+# 遗忘曲线衰减参数（将固定-0.05替换为曲线衰减因子）
+FORGET_HALF_LIFE = 120            # 遗忘半衰期（秒），CHECK_INTERVAL ≈ 此值的 0.17x，衰减因子约 0.89
+                                   # 每 20s 衰减到原来的 ≈89%，越接近下限越慢
+
 CHECK_INTERVAL = 20               # 匹配/消失检查周期（秒），与 _save_loop 同步
 
 # ========================================
@@ -211,9 +214,5 @@ PERSONA_DECAY_DECREMENT = 0.05
 # ========================================
 # 物品使用习惯分析配置
 # ========================================
-ITEM_HABIT_DATA_FILE = os.path.join(DATA_DIR, "item_histories.json")      # 物品历史记录文件
-ITEM_HABIT_ANALYSIS_RESULT_FILE = os.path.join(PERSONA_DIR, "item_habits.json")  # 分析结果摘要
 ITEM_HABIT_ANALYSIS_INTERVAL = 300         # 分析周期（秒），需双摄运行
-ITEM_HISTORY_MAX_PER_ITEM = 10            # 单物品最大历史记录数，超出则压缩
-ITEM_HABIT_MAX_SUMMARIES = 50              # 最大习惯摘要数量
-ITEM_HABIT_SIMILARITY_THRESHOLD = 0.75     # 摘要相似度合并阈值
+HABIT_NAME_MATCH_THRESHOLD = 0.65          # habit 候选名称匹配最低相似度，低于此值则使用 LLM 原始 query

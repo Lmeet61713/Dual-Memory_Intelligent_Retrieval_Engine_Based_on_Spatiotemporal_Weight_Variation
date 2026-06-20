@@ -108,10 +108,9 @@ class Matcher:
         self._habit_stop_event.set()
         if self._habit_analysis_thread:
             self._habit_analysis_thread.join(timeout=5)
-        # 最后强制保存历史并执行一次分析
+        # 最后执行一次分析，清空剩余轨迹
         try:
             habit_mgr = get_habit_manager()
-            habit_mgr.store.force_save()
             count = habit_mgr.run_analysis()
             if count > 0:
                 print(f"[Matcher] 停止前完成最后一次习惯分析，更新 {count} 条摘要")
@@ -289,7 +288,6 @@ class Matcher:
 
             try:
                 habit_mgr = get_habit_manager()
-                habit_mgr.store.force_save()  # 分析前先持久化最新历史
                 updated = habit_mgr.run_analysis()
                 if updated > 0:
                     print(f"[HabitAnalysis] 本轮习惯分析完成，更新/新增 {updated} 条摘要")
