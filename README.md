@@ -175,7 +175,7 @@ uv run python main.py
   - 静止衰减：连续多次未移动 → 步长累计达到阈值后触发衰减
   - 消失衰减：超过 CHECK_INTERVAL 未被任何摄像头观测到 → 触发衰减
 - **遗忘曲线**：衰减量按 `factor = 0.5 ^ (CHECK_INTERVAL / FORGET_HALF_LIFE)` 计算，权重越高衰减越慢。
-> ![ebbinghaus_curve.png](test/ebbinghaus_curve.png)
+> ![ebbinghaus_curve.png](test_result/ebbinghaus_curve.png)
 
 
 ### 物品使用习惯分析（Item Habit Analysis）
