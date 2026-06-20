@@ -21,6 +21,7 @@ from application.data_exporter import DataExporter
 from Agent.agent import get_agent
 from Agent.tool_context import ToolContext, set_current_context, clear_current_context
 from langchain_core.messages import HumanMessage, AIMessage
+from decision.personal.item_habit_analyzer import get_habit_manager
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
@@ -179,7 +180,6 @@ async def chat(request: Request):
     persona_summary = persona_mgr.update_and_get_summary(all_messages, current_turn)
 
     # ★ 获取物品使用习惯摘要
-    from decision.personal.item_habit_analyzer import get_habit_manager
     habit_mgr = get_habit_manager()
     habit_section = habit_mgr.get_formatted_for_prompt()
 

@@ -9,7 +9,8 @@ from Agent.tool_context import get_current_context
 # ---------- 参数模型：空间检索 ----------
 class SpatialSearchInput(BaseModel):
     queries: List[str] = Field(
-        description="""用户想要查找的物品名称或详细描述，例如 "水杯"、"带黑色杯盖的保温杯"。
+        description="""
+        用户想要查找的物品名称或详细描述，例如 "水杯"、"带黑色杯盖的保温杯"。
                 请尽量从用户原话中提取最核心的物品名，只传入一个 query。
                 实在模糊提取不到有效名称再生成一个类似物品名称。
                 """

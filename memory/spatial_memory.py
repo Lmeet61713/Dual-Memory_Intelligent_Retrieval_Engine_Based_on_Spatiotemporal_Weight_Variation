@@ -20,20 +20,19 @@ NAME_BOOST_BONUS = 0.15      # name 加分值
 
 # ==================== 数据加载 ====================
 def load_spatial_memories() -> list[dict]:
-    """加载全量空间记忆，并自动为缺失向量的物品补全向量"""
+    """加载全量空间记忆，并自动为缺失向量的物品补全向量（仅在内存中，不写文件）"""
     if not os.path.exists(config.SPATIAL_MEMORY_FILE):
         return []
     with open(config.SPATIAL_MEMORY_FILE, 'r', encoding='utf-8') as f:
         items = json.load(f)
 
-    # 检查是否有物品缺少向量，并补全
+    # 检查是否有物品缺少向量，仅在内存中补全（不写文件，避免并发写入风险）
     model = None  # 延迟加载
-    dirty = False
     for item in items:
         name_vec = item.get('name_vec')
         features_vec = item.get('features_vec')
         refs_vec = item.get('refs_vec')
-        # 如果三个向量有一个缺失或为空，就需要计算
+        # 如果三个向量有一个缺失或为空，就需要在内存中计算
         if not name_vec or not features_vec or not refs_vec:
             if model is None:
                 model = get_model()
@@ -45,13 +44,6 @@ def load_spatial_memories() -> list[dict]:
             item['name_vec'] = model.encode(name, normalize_embeddings=True).tolist() if name else []
             item['features_vec'] = model.encode(features, normalize_embeddings=True).tolist() if features else []
             item['refs_vec'] = model.encode(refs_text, normalize_embeddings=True).tolist() if refs_text else []
-            dirty = True
-
-    # 如果有补全，写回文件
-    if dirty:
-        with open(config.SPATIAL_MEMORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(items, f, ensure_ascii=False, indent=2)
-        print(f"[空间记忆] 已为 {sum(1 for _ in items if _['name_vec'])} 个物品补全向量并保存")
 
     return items
 
