@@ -1,5 +1,6 @@
 # 🏠 Homer – 具身智能家庭物品记忆助手
 
+> **版本：v1.1 · 新增端到端交互**（2026-07-11）  
 > 看见房间，记住物品，在对话中成长——回答你的每一个"找东西"的问题。
 
 Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**空间与语义记忆**、**动态用户画像**与 **LLM Agent** 于一体的具身智能家庭物品管理助手。  
@@ -33,6 +34,9 @@ Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**�
 
 - **流式前端交互**  
   FastAPI + SSE 实现的流式聊天，支持历史会话管理、摄像头一键启停、用户画像可视化。
+
+- **端到端移动端交互 (v1.1 新增)**  
+  FastAPI WebSocket 实现手机端与 PC 端实时通信，支持会话列表浏览、历史全量加载、AI 流式回复推送。同一局域网下手机访问 `/mobile` 即可使用。
 
 ---
 
@@ -69,13 +73,16 @@ Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**�
 ## 🧱 系统架构
 
 ```
-┌────────────────────┐     ┌──────────────────────────┐
-│   前端 (Vanilla)     │     │   FastAPI 后端             │
-│   index.html       │◄───►│   /api/chat  (SSE)         │
-│   + 摄像头按钮      │     │   /api/camera/start/stop   │
-│   + 用户画像面板    │     │   /api/persona/{session}   │
-└────────────────────┘     └──────────┬───────────────┘
-                                      │
+┌────────────────────┐     ┌──────────────────────────────┐
+│   PC 端 (Vanilla)   │     │   FastAPI 后端                 │
+│   index.html        │◄───►│   /api/chat        (SSE)      │
+│   + 摄像头按钮      │     │   /api/camera/*               │
+│   + 用户画像面板    │     │   /api/persona/*              │
+├────────────────────┤     │   /ws/mobile (WebSocket) ◄────┤
+│   移动端 (mobile)    │     │   /mobile  (静态页面)         │
+│   mobile.html       │◄───►│   (get_sessions/select/send)  │
+│   WebSocket 实时通信 │     └──────────┬───────────────────-┘
+└────────────────────┘                 │
                          ┌────────────▼───────────────┐
                          │   LangChain Agent           │
                          │   (deepseek-chat)           │
@@ -211,10 +218,11 @@ homer/
 ├── config.py               # 全局配置
 ├──
 ├── application/            # 后端服务层
-│   ├── web_ui.py           # FastAPI 后端（含 SSE 流式聊天、画像接口）
+│   ├── web_ui.py           # FastAPI 后端（含 SSE 流式聊天、WebSocket 端到端交互、画像接口）
 │   ├── data_exporter.py    # 会话/记忆/向量文件读写
 │   └── static/
-│       └── index.html      # 前端界面
+│       ├── index.html      # PC 端前端界面
+│       └── mobile.html     # 移动端交互界面（WebSocket 实时通信）
 ├──
 ├── Agent/                  # LangChain Agent 层
 │   ├── agent.py            # Agent 管理器（初始化 deepseek-chat 模型）

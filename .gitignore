@@ -17,3 +17,7 @@ test
 .venv
 langgraph.json
 端到端交互
+.trae/
+*.zip
+*.docx
+待完成项目.md
