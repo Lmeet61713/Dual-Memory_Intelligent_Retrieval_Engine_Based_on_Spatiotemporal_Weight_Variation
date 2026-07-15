@@ -3,6 +3,10 @@
 全局配置参数 —— 所有模块统一引用此文件
 """
 import os
+from dotenv import load_dotenv
+
+# 加载 .env 文件中的环境变量
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 # ========================================
 # 路径配置
@@ -16,7 +20,12 @@ SPACE_DIR = os.path.join(DATA_DIR, "space")          # 空间记忆（物品记�
 VECTORS_DIR = os.path.join(DATA_DIR, "vectors")      # 向量 .npy 文件
 ABSTRACT_DIR = os.path.join(DATA_DIR, "abstract")    # 摘要存储根目录
 PERSONA_DIR = os.path.join(DATA_DIR, "persona")
-for d in [DATA_DIR, MEMORY_DIR, SPACE_DIR, VECTORS_DIR, ABSTRACT_DIR, PERSONA_DIR]:
+FEEDBACK_DIR = os.path.join(DATA_DIR, "feedback")
+FEEDBACK_EVENTS_DIR = os.path.join(FEEDBACK_DIR, "events")
+FEEDBACK_META_DIR = os.path.join(FEEDBACK_DIR, "meta")
+FEEDBACK_ERRORS_DIR = os.path.join(FEEDBACK_DIR, "errors")
+for d in [DATA_DIR, MEMORY_DIR, SPACE_DIR, VECTORS_DIR, ABSTRACT_DIR, PERSONA_DIR,
+          FEEDBACK_DIR, FEEDBACK_EVENTS_DIR, FEEDBACK_META_DIR, FEEDBACK_ERRORS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # 具体文件
@@ -30,13 +39,18 @@ SEMANTIC_SESSION_FILE = os.path.join(MEMORY_DIR, "chat_sessions.json")
 # 模型
 YOLO_MODEL_PATH_GLOBAL = os.path.join(BASE_DIR, "models", "best_global.pt")
 YOLO_MODEL_PATH_MOBILE = os.path.join(BASE_DIR, "models", "best_mobile.pt")
-BGE_MODEL_PATH = "C:/Users/ASUS/bge_model"
+BGE_MODEL_PATH = os.path.join(
+    os.path.expanduser("~"),
+    ".cache", "huggingface", "hub",
+    "models--BAAI--bge-small-zh-v1.5",
+    "snapshots", "7999e1d3359715c523056ef9478215996d62a620"
+)
 
 # ========================================
 # 摄像头配置
 # ========================================
-GLOBAL_CAM_ID = 2               # 全局摄像头设备索引
-MOBILE_CAM_ID = 1               # 移动摄像头设备索引
+GLOBAL_CAM_ID = 0               # 全局摄像头设备索引
+MOBILE_CAM_ID = 0               # 移动摄像头设备索引
 CAM_FRAME_WIDTH = 640
 CAM_FRAME_HEIGHT = 480
 CAM_FRAME_WIDTH_ = 640          # 第二组摄像头（备用）
@@ -63,7 +77,21 @@ PHYSICAL_SPACE_HEIGHT = 40.0   # 真实矩形平面的宽（厘米）
 # ========================================
 # LLM API 配置
 # ========================================
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "your-api-key-here")
+# 从 .env 文件读取 API Key，请在项目根目录的 .env 文件中配置
+# 获取地址: https://platform.deepseek.com/api_keys
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+
+# 启动时检查 API Key 是否已配置
+if DEEPSEEK_API_KEY == "" or "PLACEHOLDER" in DEEPSEEK_API_KEY.upper() or "PLEASE-REPLACE" in DEEPSEEK_API_KEY:
+    print("=" * 55)
+    print("  ❌ 错误: DeepSeek API Key 未设置!")
+    print("  📝 请编辑项目根目录的 .env 文件")
+    print("     将 DEEPSEEK_API_KEY 设置为你的 Key")
+    print("  🔗 https://platform.deepseek.com/api_keys")
+    print("=" * 55)
+    import sys
+    sys.exit(1)
+
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # 系统提示词模板（可能被 Agent system prompt 覆盖，保留兼容）
@@ -144,9 +172,10 @@ AGENT_SYSTEM_PROMPT = """
 # 身份：你是 Homer，一个活泼、温暖的家庭智能伴侣 🏠。
 
 # 技能：
-你拥有两个特殊技能（工具），在合适的时候自动使用：
+你拥有三个特殊技能（工具），在合适的时候自动使用：
 - search_item_location：查找物品在哪个空间、坐标、周围有什么
 - search_conversation_memory：搜索我们之前的对话话题和摘要
+- user_correction_feedback：当用户否定当前结果时，从备选列表中获取下一个可能的物品
 
 【调用规则】
 - 当用户想知道某样东西的位置（例：“我的水杯在哪”“找一下遥控器”），**必须**调用 search_item_location，把物品名称提取为 query。
@@ -157,6 +186,11 @@ AGENT_SYSTEM_PROMPT = """
 - 日常问候、开玩笑、感慨、询问与家庭物品完全无关的知识（例如学习、娱乐）时，**不要调用工具**，用你本来的性格愉快地聊天，适当使用颜文字 (◍•ᴗ•◍)。
 - 你可以主动总结最近聊过的有趣话题，适当引用记忆中的信息让对话更亲切。
 
+【补偿机制 —— 用户否定处理】
+- 当用户对你给出的物品位置结果表示否定（如"不对"、"不是这个"、"搞错了"、"位置不对"），**必须优先调用 user_correction_feedback** 获取下一个备选物品，而不是重新调用 search_item_location。
+- 只有当 user_correction_feedback 返回"备选物品已全部耗尽"或类似提示时，才引导用户提供更多线索（颜色、形状、大小、附近有什么等），然后调用 search_item_location 重新搜索。
+- 如果用户直接在否定时提供了新的明确线索（如"不是维生素，是那个白色的胃药"），你应该同时传入 reason 参数给 user_correction_feedback，让系统记录纠正原因。
+
 # 强制性规则：
 - 无论用户以任何形式询问物品、找东西、或涉及物理位置，你都必须先调用 search_item_location 工具。
 - 绝对不允许凭空编造物品的位置，哪怕你认为自己知道也不行。
@@ -166,6 +200,7 @@ AGENT_SYSTEM_PROMPT = """
 # 你的自由：
 1. search_item_location — 查找物品位置
 2. search_conversation_memory — 搜索对话历史话题
+3. user_correction_feedback — 用户否定时获取备选候选
  
 # 【参考信息的处理】
 - 工具返回给你的内容是一个简洁的物品信息，你必须用自己的话把它转成一句完整的、亲切的自然语言回复。
@@ -216,3 +251,22 @@ PERSONA_DECAY_DECREMENT = 0.05
 # ========================================
 ITEM_HABIT_ANALYSIS_INTERVAL = 300         # 分析周期（秒），需双摄运行
 HABIT_NAME_MATCH_THRESHOLD = 0.65          # habit 候选名称匹配最低相似度，低于此值则使用 LLM 原始 query
+
+# ========================================
+# 补偿机制配置
+# ========================================
+COMPENSATION_DB_PATH = os.path.join(DATA_DIR, "compensation.db")
+COMPENSATION_TOP_K = 5                # 空间检索返回候选数量
+COMPENSATION_BUFFER_TTL_HOURS = 1     # 补偿队列过期时间（小时），超期自动清理
+
+# ========================================
+# 反馈系统优化配置
+# ========================================
+FEEDBACK_METRICS_DIR = os.path.join(FEEDBACK_DIR, "metrics")
+os.makedirs(FEEDBACK_METRICS_DIR, exist_ok=True)
+
+FEEDBACK_BASE_ALPHA = 0.5           # 贝叶斯修正基础 alpha（保守值，避免误伤）
+FEEDBACK_ALPHA_STEP = 0.1           # 每次连续否定 alpha 递增量
+FEEDBACK_MAX_ALPHA = 0.9            # alpha 上限（激进衰减上限）
+HIGH_DISPUTE_THRESHOLD = 3          # 24h 内连续否定次数触发 high_dispute 标记
+FEEDBACK_HISTORY_MAX = 50           # feedback_history 数组最大保留条数

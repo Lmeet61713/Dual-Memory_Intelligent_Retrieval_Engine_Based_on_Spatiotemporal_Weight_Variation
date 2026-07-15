@@ -7,6 +7,7 @@ Homer 系统主入口
 
 import sys
 import os
+import socket
 from application.web_ui import start_server, set_matcher
 from decision.matcher import Matcher
 import config
@@ -17,14 +18,39 @@ sys.path.insert(0, BASE_DIR)                      # 将当前目录添加到系�
 HOST_PREFIX = "http://localhost:"
 
 
+def get_local_ip() -> str:
+    """获取本机局域网 IP 地址"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
 if __name__ == "__main__":
-    print("=" * 50)
-    print("  🏠 Homer - 智能家庭助手")
-    print("=" * 50)
-    print(f"  前端端口: {HOST_PREFIX}{config.WEB_SERVER_PORT}")
-    print(f"  全局摄像头: id={config.GLOBAL_CAM_ID}")
-    print(f"  移动摄像头: id={config.MOBILE_CAM_ID}")
-    print("=" * 50)
+    local_ip = get_local_ip()
+    port = config.WEB_SERVER_PORT
+
+    print()
+    print("=" * 55)
+    print("            🏠  Homer - 智能家庭助手")
+    print("=" * 55)
+    print()
+    print("  🖥️  PC 端访问:")
+    print(f"     http://localhost:{port}")
+    print(f"     http://{local_ip}:{port}")
+    print()
+    print("  📱  移动端访问（同一局域网下）:")
+    print(f"     http://{local_ip}:{port}/mobile")
+    print()
+    print("  📷  全局摄像头: id={}".format(config.GLOBAL_CAM_ID))
+    print("  📷  移动摄像头: id={}".format(config.MOBILE_CAM_ID))
+    print()
+    print("=" * 55)
+    print()
 
     # 1. 创建 Matcher 实例（不启动）
     matcher = Matcher()

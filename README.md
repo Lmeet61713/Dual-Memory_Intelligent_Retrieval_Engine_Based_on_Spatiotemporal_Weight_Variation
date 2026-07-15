@@ -1,10 +1,10 @@
 # 🏠 Homer – 具身智能家庭物品记忆助手
 
-> **版本：v1.1 · 新增端到端交互**（2026-07-11）  
+> **版本：v1.2 · 补偿机制 + 反馈闭环**（2026-07-12）  
 > 看见房间，记住物品，在对话中成长——回答你的每一个"找东西"的问题。
 
-Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**空间与语义记忆**、**动态用户画像**与 **LLM Agent** 于一体的具身智能家庭物品管理助手。  
-它能实时观察房间，记住每样东西的位置和"活跃度"，并且在每一次自然对话中逐步了解你的性格偏好，最终像一个真正了解这个家的伙伴一样帮你快速找到物品。
+Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**空间与语义记忆**、**动态用户画像**、**LLM Agent**、**补偿机制**与**闭环反馈系统**于一体的具身智能家庭物品管理助手。  
+它能实时观察房间，记住每样东西的位置和"活跃度"，并且在每一次自然对话中逐步了解你的性格偏好；当你对结果不满意时，系统会通过补偿队列提供备选物品，并基于你的反馈自动修正记忆权重，最终像一个真正了解这个家的伙伴一样帮你快速找到物品。
 
 ---
 
@@ -27,7 +27,13 @@ Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**�
   对话会自动分段，每个话题由大模型生成摘要并保存为向量。当用户聊到之前的事情时，Homer 能主动回忆起相关上下文，真正实现长期对话记忆。
 
 - **LLM Agent 自主决策**  
-  基于 LangChain 的智能体会自主判断何时查询物品位置、何时搜索对话历史，无需固定的唤醒词。你只需要像跟人说话一样，说"我的水杯在哪儿？""还记得上次我们聊的那本书吗？"
+  基于 LangChain 的智能体会自主判断何时查询物品位置、何时搜索对话历史、何时提供备选候选，无需固定的唤醒词。你只需要像跟人说话一样，说"我的水杯在哪儿？""还记得上次我们聊的那本书吗？"
+
+- **补偿机制 (v1.2 新增)**  
+  空间检索返回 Top-5 候选时，Top-1 直接展示给用户，Top 2-5 自动存入 SQLite 补偿缓冲队列。当用户否定当前结果（如"不对""不是这个"）时，Agent 自动调用 `user_correction_feedback` 工具从队列中弹出下一候选，无需重新检索。缓冲队列有过期自动清理机制（默认 1 小时）。
+
+- **闭环反馈系统 (v1.2 新增)**  
+  用户否定物品位置后，系统通过贝叶斯更新对物品的置信度/权重进行自适应惩罚。每次否定会记录到物品的 `feedback_history` 中，系统根据 24 小时内连续否定次数动态调整修正力度（alpha 值），多次被否定的物品会被标记为 `high_dispute` 或 `unstable_perception`，确保越用越准确。同时支持对语义记忆和用户画像的反馈修正。
 
 - **动态用户画像**  
   通过对话内容持续提取用户的性格特质、兴趣偏好、价值观、沟通风格和生活习惯五维画像，并应用衰减与奖励机制进行动态调整，在最终回复中融入这些信息，使每一次交互都更个性化。
@@ -89,6 +95,7 @@ Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**�
                          │   + tools:                  │
                          │   - search_item_location    │
                          │   - search_conversation_mem │
+                         │   - user_correction_feedback│
                          │   ★ 动态拼接系统提示词      │
                          │   (用户画像 + 物品习惯)      │
                          └────┬──────────────────┬─────┘
@@ -119,6 +126,13 @@ Homer 是一个集**双摄像头目标检测**、**动态物品显著性**、**�
            │  遗忘曲线衰减 / 高权重提醒管理        │
            └───────┬─────────────────────────────┘
                    │
+           ┌───────▼──────────────────────┐
+           │   补偿机制 + 反馈闭环         │
+           │  SQLite 补偿缓冲队列         │
+           │  贝叶斯自适应权重修正         │
+           │  feedback_history 审计追踪   │
+           └───────┬──────────────────────┘
+                   │
            ┌───────▼───────┐
            │   感知层        │
            │   YOLOv8 双模型 │
@@ -147,15 +161,13 @@ uv sync
 
 ### 2. 配置
 
-在项目根目录创建 `.env` 文件，填入必要 API Key（或设置系统环境变量）：
-
-```
-DEEPSEEK_API_KEY=sk-xxxxxxxx
-```
-
-编辑 `config.py` 中与硬件相关的参数（若无需摄像头，可跳过）：
+编辑 `config.py` 中的 API Key 和硬件参数：
 
 ```python
+# 填入你的 DeepSeek API Key（获取地址: https://platform.deepseek.com/api_keys）
+DEEPSEEK_API_KEY = "sk-xxxxxxxx"
+
+# 摄像头配置（若无需摄像头，使用纯对话模式可跳过）
 GLOBAL_CAM_ID = 0    # 全局摄像头设备索引
 MOBILE_CAM_ID = 1    # 移动摄像头设备索引
 ```
@@ -208,6 +220,18 @@ uv run python main.py
 - 应用衰减与奖励机制：稳定特征获得小幅奖励，波动特征施加衰减。
 - 画像摘要注入 Agent 系统提示词，前端侧边栏支持可视化查看和删除特征。
 
+### 补偿机制（v1.2 新增）
+- 空间检索返回 Top-5 候选时，Top-1 直接格式化返回给 Agent，Top 2-5（`score`、`tone`、`likelihood`、`prior` 等完整信息）自动存入 SQLite 补偿缓冲队列。
+- 用户否定结果时，Agent 自动调用 `user_correction_feedback` 工具，从队列中按 position 顺序弹出下一候选，无需重新检索。
+- 缓冲队列有过期自动清理机制（默认 1 小时），通过 `cleanup_expired_buffers()` 清理残留数据。
+- 队列耗尽时提示用户提供更多线索，引导重新搜索。
+
+### 闭环反馈系统（v1.2 新增）
+- **贝叶斯自适应修正**：用户否定物品位置时，对被否定的 Top-1 物品执行权重惩罚（`confidence × (1 - evidence_strength)`）。
+- **Adaptive Alpha**：系统根据物品 24 小时内连续否定次数动态调整修正力度，从基础 `FEEDBACK_BASE_ALPHA=0.5` 开始，每次否定递增 `FEEDBACK_ALPHA_STEP=0.1`，上限 `FEEDBACK_MAX_ALPHA=0.9`。
+- **审计追踪**：每次修正记录到 `feedback_history` 数组（保留最近 50 条），24h 内否定 ≥ `HIGH_DISPUTE_THRESHOLD=3` 次标记 `high_dispute`，24h 内修正 ≥ 2 次标记 `unstable_perception`。
+- **多维度修正**：支持 `location_wrong`（位置修正）、`memory_wrong`（语义记忆降权）、`persona_wrong`（画像特征修正）三种反馈类型。
+
 ---
 
 ## 📂 目录结构
@@ -225,13 +249,20 @@ homer/
 │       └── mobile.html     # 移动端交互界面（WebSocket 实时通信）
 ├──
 ├── Agent/                  # LangChain Agent 层
-│   ├── agent.py            # Agent 管理器（初始化 deepseek-chat 模型）
-│   ├── tools.py            # 工具定义（search_item_location / search_conversation_memory）
-│   └── tool_context.py     # 请求级上下文传递（contextvars）
+│   ├── agent.py            # Agent 管理器（动态注入画像+习惯，支持 3 个工具）
+│   ├── tools.py            # 工具定义（search_item_location / search_conversation_memory / user_correction_feedback）
+│   └── tool_context.py     # 请求级上下文传递（contextvars，含补偿队列 ID）
 ├──
 ├── memory/                 # 记忆层
 │   ├── spatial_memory.py   # 空间记忆检索（BGE 向量 + 乘法似然 + 先验后验）
-│   └── semantic_memory.py  # 语义记忆（BGE 模型单例、话题分段、摘要生成、向量检索）
+│   ├── semantic_memory.py  # 语义记忆（BGE 模型单例、话题分段、摘要生成、向量检索）
+│   └── compensation.py     # 补偿缓冲队列（SQLite，Top 2-5 候选存储与弹出）
+├──
+├── feedback/               # 反馈系统
+│   ├── dispatcher.py       # 反馈分发器（贝叶斯修正 + adaptive alpha + unstable 标记）
+│   ├── router.py           # FastAPI 路由（Module A 自反馈接口）
+│   ├── schemas.py          # 反馈数据模型
+│   └── metrics.py          # 反馈指标统计
 ├──
 ├── perception/             # 感知层
 │   ├── camera_stream.py    # 摄像头驱动（GlobalCamera / MobileCamera）
@@ -239,7 +270,7 @@ homer/
 ├──
 ├── decision/               # 决策层
 │   ├── matcher.py          # 双摄像头匹配引擎（30 帧检测 + 交叉匹配 + 保存循环）
-│   ├── confidence_manager.py  # 权重管理器（移动奖励/静止衰减/消失衰减 + 遗忘曲线）
+│   ├── confidence_manager.py  # 权重管理器（移动奖励/静止衰减/消失衰减 + 遗忘曲线 + 反馈审计）
 │   ├── high_weight_reminder.py # 高权重物品提醒管理器
 │   └── personal/           # 个性化模块
 │       ├── Peronal_manager.py  # 用户性格画像管理器（五维 + LLM 提取 + 衰减奖励）
@@ -260,7 +291,9 @@ homer/
 │   ├── vectors/            # 语义记忆向量（每 session 子目录）
 │   ├── abstract/           # 话题摘要文件
 │   ├── persona/            # 用户画像文件
-│   └── reminder/           # 高权重提醒状态
+│   ├── feedback/           # 反馈事件/错误/指标日志
+│   ├── reminder/           # 高权重提醒状态
+│   └── compensation.db     # 补偿缓冲队列数据库
 └──
 ```
 
@@ -268,6 +301,8 @@ homer/
 
 ## 🔭 未来计划（Roadmap）
 
+- [x] **补偿机制**：用户否定时从备选队列弹出候选，无需重新检索（v1.2 已完成）
+- [x] **闭环反馈修正**：基于贝叶斯更新的自适应权重修正与审计追踪（v1.2 已完成）
 - [ ] **前端摄像头实时画面**：在前端展示全局和移动摄像头的检测画面。
 - [ ] **对话反馈空间修正**：从用户纠正语句中自动更新物品位置和参照物。
 - [ ] **物品关系图可视化**：在前端展示物品之间的关联网络。

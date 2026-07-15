@@ -12,6 +12,8 @@ class ToolContext:
     session_id: str
     all_messages: list
     retrieval_triggered: bool = False   # 供工具内部使用，标识是否触发了检索
+    compensation_buffer_id: Optional[str] = None
+    last_top1_item: Optional[dict] = None  # 上一次检索的 Top-1 物品信息，用于反馈闭环
 
 
 # 定义一个 contextvar，默认值为 None

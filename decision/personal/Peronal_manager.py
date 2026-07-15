@@ -17,6 +17,9 @@ import numpy as np
 # 五维画像结构
 DIMS = ["personality_traits", "interests", "values", "communication_style", "habits"]
 
+import config
+
+
 class PersonalManager:
     """每个用户 / 会话绑定一个实例，按 session_id 持久化"""
 
@@ -98,8 +101,8 @@ class PersonalManager:
 """
         try:
             client = OpenAI(
-                api_key=os.environ.get('DEEPSEEK_API_KEY'),
-                base_url="https://api.deepseek.com"
+                api_key=config.DEEPSEEK_API_KEY,
+                base_url=config.DEEPSEEK_BASE_URL
             )
             response = client.chat.completions.create(
                 model="deepseek-chat",

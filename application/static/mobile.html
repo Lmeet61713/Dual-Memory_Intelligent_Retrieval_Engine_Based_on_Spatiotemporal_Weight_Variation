@@ -417,8 +417,8 @@ function handleWsMessage(msg) {
             break;
 
         case 'reply_chunk':
-            // 追加内容到当前流式气泡
-            if (state.streamingBubble) {
+            // 追加内容到当前流式气泡（使用显式 in 检查，允许空字符串通过）
+            if (state.streamingBubble && ('content' in msg)) {
                 const current = state.streamingBubble.textContent || '';
                 state.streamingBubble.textContent = current + msg.content;
                 scrollBottom();
@@ -493,7 +493,11 @@ function renderMessages() {
         chatMessages.innerHTML = '<div class="empty-hint">✨ 开始对话吧</div>';
         return;
     }
-    state.messages.forEach(m => addBubble(m.role, m.content));
+    state.messages.forEach(m => {
+        // 容错：content 为空时显示占位文本，确保消息气泡不会"消失"
+        const content = (m.content && m.content.trim()) ? m.content : '（消息内容为空）';
+        addBubble(m.role, content);
+    });
     scrollBottom();
 }
 

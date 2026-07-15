@@ -289,13 +289,36 @@
             from { opacity: 0; transform: translateY(4px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        /* 反馈按钮 */
+        .feedback-row {
+            display: flex;
+            gap: 0.4rem;
+            margin-top: 0.35rem;
+            padding-left: 0.2rem;
+        }
+        .fb-btn {
+            font-size: 0.7rem;
+            padding: 0.2rem 0.6rem;
+            border: 1px solid #d5d8de;
+            border-radius: 1rem;
+            background: #fff;
+            cursor: pointer;
+            color: #666;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .fb-btn:hover { background: #f0f4ff; border-color: #4a90e2; color: #4a90e2; }
+        .fb-btn.sent { background: #e8f5e9; border-color: #4caf50; color: #2e7d32; cursor: default; }
+        .fb-btn.sent::after { content: ' ✓'; }
+        .fb-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
 </head>
 <body>
 
 <!-- ==================== 侧边栏 ==================== -->
 <aside class="sidebar">
-    <h3>🏠 Homer</h3>
+    <h3>🏠 Homer <span style="font-size:0.55rem;color:#aaa;font-weight:400;">v1.2-feedback</span></h3>
     <button class="btn btn-new" onclick="newChat()">＋ 新对话</button>
 
     <div class="section-label">历史会话</div>
@@ -334,6 +357,9 @@
 </main>
 
 <script>
+// v1.2-feedback — Module A 自反馈系统已集成
+console.log('Homer v1.2-feedback 已加载 | 反馈按钮: ✅ | POST /feedback: ✅');
+
 // ==================== 状态 ====================
 const state = {
     sessionId: new Date().toISOString().replace(/[:.]/g, '_'),
@@ -401,6 +427,7 @@ function renderMessages() {
         return;
     }
     state.messages.forEach(m => addBubble(m.role, m.content));
+    addFeedbackToAllAssistant();
     scrollBottom();
 }
 
@@ -410,6 +437,43 @@ function addBubble(role, content) {
     div.innerHTML = `<div class="bubble">${escapeHtml(content)}</div>`;
     chatMessages.appendChild(div);
     return div.querySelector('.bubble');
+}
+
+// ==================== 反馈按钮（追加到 assistant 消息底部） ====================
+function addFeedbackButtons(assistantMsgDiv, msgIndex) {
+    // 防止重复添加
+    if (assistantMsgDiv.querySelector('.feedback-row')) return;
+
+    const fbRow = document.createElement('div');
+    fbRow.className = 'feedback-row';
+    fbRow.innerHTML = `
+        <button class="fb-btn" data-idx="${msgIndex}" data-type="location_wrong" title="AI说的物品位置不对">📍 位置错了</button>
+        <button class="fb-btn" data-idx="${msgIndex}" data-type="memory_wrong" title="AI记错了之前的事">🧠 记忆错了</button>
+        <button class="fb-btn" data-idx="${msgIndex}" data-type="persona_wrong" title="AI对你的判断不对">👤 画像错了</button>
+    `;
+    fbRow.querySelectorAll('.fb-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const idx = parseInt(this.dataset.idx);
+            const fbType = this.dataset.type;
+            submitFeedback(idx, fbType);
+        });
+    });
+    assistantMsgDiv.appendChild(fbRow);
+    console.log('[feedback] 按钮已添加, msgIndex=' + msgIndex);
+}
+
+function addFeedbackToAllAssistant() {
+    // 给当前所有 assistant 消息添加反馈按钮
+    let msgIdx = 0;
+    for (let i = 0; i < chatMessages.children.length; i++) {
+        const child = chatMessages.children[i];
+        if (child.classList.contains('assistant')) {
+            addFeedbackButtons(child, msgIdx);
+        }
+        if (child.classList.contains('user') || child.classList.contains('assistant')) {
+            msgIdx++;
+        }
+    }
 }
 
 function escapeHtml(s) {
@@ -430,6 +494,10 @@ async function send() {
     state.isLoading = true;
     sendBtn.disabled = true;
     chatInput.disabled = true;
+
+    // 清除空状态占位（如果有的话）
+    const emptyState = chatMessages.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
 
     // 添加用户消息
     state.messages.push({ role: 'user', content: text });
@@ -454,42 +522,88 @@ async function send() {
         let buffer = '';
         let fullContent = '';
 
-        while (true) {
+        let streamDone = false;
+        while (!streamDone) {
             const { value, done } = await reader.read();
-            if (done) break;
 
-            buffer += decoder.decode(value, { stream: true });
+            // ⚠️ 关键修复：先处理 value，再判断 done。
+            // 当浏览器将最后一包数据与 done=true 一同交付时（HTTP/2、小响应、本地开发常见），
+            // 如果先 break 则会丢弃整包数据，导致所有 AI 回复内容丢失。
+            if (value) {
+                // stream: !done —— 最后一个 chunk 使用 stream:false 以刷新不完整的 UTF-8 多字节字符
+                buffer += decoder.decode(value, { stream: !done });
 
-            // 按行分割，处理 SSE 协议
-            const lines = buffer.split('\n');
-            // 最后一个可能是不完整的行，保留在 buffer
-            buffer = lines.pop() || '';
+                // 按行分割，处理 SSE 协议
+                const lines = buffer.split('\n');
+                // 最后一个可能是不完整的行（或空字符串），保留在 buffer 等待后续拼接
+                buffer = lines.pop() || '';
 
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const jsonStr = line.slice(6).trim();
-                if (!jsonStr) continue;
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const jsonStr = line.slice(6).trim();
+                    if (!jsonStr) continue;
 
-                try {
-                    const data = JSON.parse(jsonStr);
-                    if (data.c) {
-                        // 每个词元追加显示
-                        fullContent += data.c;
-                        assistantBubble.textContent = fullContent;
-                        scrollBottom();
-                    }
-                    if (data.done) {
-                        // 流结束 → 更新 state
-                        // 检查是否已经存在这条助手消息（避免重复）
-                        const lastMsg = state.messages[state.messages.length - 1];
-                        if (lastMsg && lastMsg.role === 'assistant') {
-                            lastMsg.content = fullContent;
-                        } else {
-                            state.messages.push({ role: 'assistant', content: fullContent });
+                    try {
+                        const data = JSON.parse(jsonStr);
+                        if ('c' in data) {
+                            // 每个词元追加显示（使用显式 in 检查，允许空字符串通过）
+                            fullContent += data.c;
+                            assistantBubble.textContent = fullContent;
+                            scrollBottom();
                         }
+                        if (data.err) {
+                            console.error('[SSE 错误]', data.err);
+                            assistantBubble.textContent = '服务异常: ' + data.err;
+                            state.messages.push({ role: 'assistant', content: '服务异常: ' + data.err });
+                        }
+                        if (data.done) {
+                            // 流结束 → 更新 state
+                            const lastMsg = state.messages[state.messages.length - 1];
+                            if (lastMsg && lastMsg.role === 'assistant') {
+                                lastMsg.content = fullContent;
+                            } else {
+                                state.messages.push({ role: 'assistant', content: fullContent });
+                            }
+                        }
+                    } catch (e) {
+                        // JSON 解析失败时输出警告，便于排查（之前静默吞噬了所有错误）
+                        console.warn('[SSE] JSON 解析失败, 原始内容:', jsonStr, e);
                     }
-                } catch (e) {
-                    // 非 JSON 行，忽略
+                }
+            }
+
+            if (done) {
+                streamDone = true;
+            }
+        }
+
+        // 处理 while 循环结束后 buffer 中的残留数据（边界情况兜底）
+        if (buffer.trim()) {
+            const line = buffer.trim();
+            if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr) {
+                    try {
+                        const data = JSON.parse(jsonStr);
+                        if ('c' in data) {
+                            fullContent += data.c;
+                            assistantBubble.textContent = fullContent;
+                            scrollBottom();
+                        }
+                        if (data.err) {
+                            console.error('[SSE 残留错误]', data.err);
+                        }
+                        if (data.done) {
+                            const lastMsg = state.messages[state.messages.length - 1];
+                            if (lastMsg && lastMsg.role === 'assistant') {
+                                lastMsg.content = fullContent;
+                            } else {
+                                state.messages.push({ role: 'assistant', content: fullContent });
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[SSE 残留] JSON 解析失败:', jsonStr, e);
+                    }
                 }
             }
         }
@@ -514,6 +628,11 @@ async function send() {
         sendBtn.disabled = false;
         chatInput.disabled = false;
         chatInput.focus();
+        // 在流式回复完成后，给 assistant 消息追加反馈按钮
+        if (assistantBubble && assistantBubble.parentElement) {
+            const msgIdx = state.messages.length - 1;  // assistant 是最后一条
+            addFeedbackButtons(assistantBubble.parentElement, msgIdx);
+        }
         loadSessions();  // 刷新列表
         loadPersona();  // 每次对话后刷新画像
     }
@@ -686,7 +805,57 @@ async function initPersona() {
 // 在 send() 函数末尾（流式回复完成后）刷新画像
 // 在 finally 块末尾加一句：loadPersona();
 
-// ==================== 初始化 ====================
+// ==================== 反馈提交 ====================
+async function submitFeedback(msgIndex, feedbackType) {
+    // 找到对应按钮
+    const msgDiv = chatMessages.children[msgIndex];
+    if (!msgDiv) return;
+    const btns = msgDiv.querySelectorAll('.fb-btn');
+    for (const btn of btns) {
+        btn.disabled = true;
+        // 高亮被点击的按钮
+        if (btn.textContent.includes(feedbackType === 'location_wrong' ? '位置' : feedbackType === 'memory_wrong' ? '记忆' : '画像')) {
+            btn.classList.add('sent');
+        }
+    }
+
+    // 构建 payload
+    const payload = {};
+    if (feedbackType === 'location_wrong') {
+        const itemMatch = state.messages[msgIndex]?.content?.match(/物品[「「](.+?)[」」]/);
+        payload.item_id = itemMatch ? itemMatch[1] : 'unknown_item';
+        payload.correct_location = '';
+        payload.confidence = 0.9;
+    } else if (feedbackType === 'memory_wrong') {
+        payload.memory_id = `mem_${msgIndex}_${Date.now()}`;
+        payload.reason = '';
+        payload.confidence = 0.85;
+    } else if (feedbackType === 'persona_wrong') {
+        payload.dimension = 'personality_traits';
+        payload.disagree_value = 'user_disagreed';
+        payload.confidence = 0.9;
+    }
+
+    try {
+        const resp = await fetch('/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                type: feedbackType,
+                session_id: state.sessionId,
+                payload: payload
+            })
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            console.log(`[反馈] 已提交: ${feedbackType} → ${result.event_id}`);
+        } else {
+            console.error('[反馈] 失败:', result);
+        }
+    } catch (e) {
+        console.error('[反馈] 网络错误:', e);
+    }
+}
 async function init() {
     // 检查摄像头状态
     try {

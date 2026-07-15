@@ -49,9 +49,11 @@ def load_spatial_memories() -> list[dict]:
 
 
 # ==================== 检索算法 ====================
-def search_spatial_memory(user_query: str) -> Optional[dict]:
+def search_spatial_memory(user_query: str) -> Optional[list[dict]]:
     """
     空间记忆检索：乘法似然 × 先验
+    返回 Top-5 结果列表，每个结果包含 item, score, tone, likelihood, prior
+    无匹配时返回 None
     """
     items = load_spatial_memories()
     if not items:
@@ -161,33 +163,40 @@ def search_spatial_memory(user_query: str) -> Optional[dict]:
         for r in scored:
             r['norm'] = 0.0
 
-    # 取最高分
+    # 取 Top-5
     scored.sort(key=lambda r: r['score'], reverse=True)
-    best = scored[0]
+    top_results = []
+    for r in scored[:5]:
+        # Calculate tone for each
+        ns = r.get('norm', 0.0)
+        if ns >= 0.7:
+            tone = 'high'
+        elif ns >= 0.4:
+            tone = 'mid'
+        else:
+            tone = 'low'
+        top_results.append({
+            'item': r['item'],
+            'score': round(r['score'], 4),
+            'tone': tone,
+            'likelihood': r['likelihood'],
+            'prior': r['prior']
+        })
 
-    # 语气判定
-    ns = best['norm']
-    if ns >= 0.7:
-        tone = 'high'
-    elif ns >= 0.4:
-        tone = 'mid'
-    else:
-        tone = 'low'
-
+    # 打印结果
+    best = top_results[0]
+    best_ns = scored[0].get('norm', 0.0)
     print(f"\n===== 最优结果 =====")
     print(f"物品: {best['item']['name']}")
-    print(f"后验得分: {best['score']:.4f} (归一化: {ns:.3f})")
-    print(f"语气: {tone}")
+    print(f"后验得分: {best['score']:.4f} (归一化: {best_ns:.3f})")
+    print(f"语气: {best['tone']}")
     print(f"似然: {best['likelihood']:.4f}, 先验: {best['prior']}")
+    if len(top_results) > 1:
+        others = [r['item']['name'] for r in top_results[1:]]
+        print(f"其他 Top 结果: {', '.join(others)}")
     print()
 
-    return {
-        'item': best['item'],
-        'score': round(best['score'], 4),
-        'tone': tone,
-        'likelihood': best['likelihood'],
-        'prior': best['prior']
-    }
+    return top_results
 
 
 def _cosine_sim(query_vec: np.ndarray, model, text: str) -> float:
@@ -219,9 +228,10 @@ def format_spatial_result(result: dict) -> str:
 def run_spatial_tool(user_query: str) -> Optional[str]:
     """
     空间记忆 Tool 入口
+    调用 search_spatial_memory 获取 Top-5 结果，取最优结果格式化返回
     返回格式化文本 或 None（无匹配）
     """
-    result = search_spatial_memory(user_query)
-    if result is None:
+    results = search_spatial_memory(user_query)
+    if results is None or len(results) == 0:
         return "【环境记忆】当前没有任何物品记录，或未找到与您问题相关的物品。"
-    return format_spatial_result(result)
+    return format_spatial_result(results[0])

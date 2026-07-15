@@ -244,6 +244,90 @@ class ConfidenceManager:
                 'refs_vec': refs_vec
             })
 
+    # ==================== 反馈审计 ====================
+    def apply_feedback_penalty(self, item_name: str, delta: float, event_id: str, feedback_type: str = "location_wrong") -> bool:
+        """
+        基于用户反馈调整物品权重，并记录反馈审计日志。
+        
+        Args:
+            item_name: 物品名称（与 _items 的 key 中的 class_name 一致）
+            delta: 权重变化量（负数表示衰减）
+            event_id: 反馈事件 ID
+            feedback_type: 反馈类型（location_wrong / memory_wrong / persona_wrong）
+        
+        Returns:
+            bool: True 表示成功找到并更新，False 表示未找到
+        """
+        found_item = None
+        found_key = None
+        key_0 = (item_name, 0)
+        if key_0 in self._items:
+            found_item = self._items[key_0]
+            found_key = key_0
+        else:
+            for key, item in self._items.items():
+                if item.get('name') == item_name:
+                    found_item = item
+                    found_key = key
+                    break
+
+        if found_item is None:
+            return False
+
+        old_weight = found_item['weight']
+        new_weight = max(min(old_weight + delta, config.MAX_WEIGHT), config.MIN_WEIGHT)
+        found_item['weight'] = round(new_weight, 4)
+
+        if 'feedback_history' not in found_item:
+            found_item['feedback_history'] = []
+        found_item['feedback_history'].append({
+            'ts': time.time(),
+            'delta': round(delta, 4),
+            'old_weight': old_weight,
+            'new_weight': round(new_weight, 4),
+            'event_id': event_id,
+            'type': feedback_type
+        })
+
+        max_history = getattr(config, 'FEEDBACK_HISTORY_MAX', 50)
+        if len(found_item['feedback_history']) > max_history:
+            found_item['feedback_history'] = found_item['feedback_history'][-max_history:]
+
+        self._check_high_dispute(found_item)
+
+        self._save()
+
+        print(f"[ConfidenceManager] 反馈修正: {item_name} ({old_weight:.4f} → {new_weight:.4f}, delta={delta:.4f})")
+
+        return True
+
+    def _check_high_dispute(self, item: dict):
+        """检查 24h 内连续否定次数，超过阈值标记 high_dispute"""
+        feedback_history = item.get('feedback_history')
+        if not feedback_history:
+            return
+
+        if 'flags' not in item:
+            item['flags'] = []
+
+        now = time.time()
+        cutoff = now - 86400
+
+        dispute_count = 0
+        for entry in feedback_history:
+            if entry.get('type') == 'location_wrong' and entry.get('delta', 0) < 0:
+                if entry.get('ts', 0) >= cutoff:
+                    dispute_count += 1
+
+        threshold = getattr(config, 'HIGH_DISPUTE_THRESHOLD', 3)
+
+        if dispute_count >= threshold:
+            if 'high_dispute' not in item['flags']:
+                item['flags'].append('high_dispute')
+        else:
+            if 'high_dispute' in item['flags']:
+                item['flags'].remove('high_dispute')
+
     # ==================== 查询接口 ====================
     def get_all_items(self) -> list:
         """获取所有物品信息"""

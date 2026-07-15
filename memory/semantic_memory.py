@@ -87,8 +87,8 @@ def _generate_segment_abstract(
 
     try:
         client = OpenAI(
-            api_key=os.environ.get('DEEPSEEK_API_KEY'),
-            base_url="https://api.deepseek.com"
+            api_key=config.DEEPSEEK_API_KEY,
+            base_url=config.DEEPSEEK_BASE_URL
         )
         response = client.chat.completions.create(
             model="deepseek-chat",
