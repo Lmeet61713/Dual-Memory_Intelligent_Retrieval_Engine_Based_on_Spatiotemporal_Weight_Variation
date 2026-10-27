@@ -89,6 +89,58 @@
             font-weight: 600;
         }
 
+        /* ===== 记忆落盘开关 ===== */
+        .persist-panel {
+            margin: 0 0.8rem 0.6rem;
+            padding: 0.55rem 0.65rem;
+            background: #f7f9fc;
+            border: 1px solid #e8edf5;
+            border-radius: 0.5rem;
+        }
+        .persist-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 0.82rem;
+            color: #444;
+        }
+        .persist-hint {
+            font-size: 0.68rem;
+            color: #999;
+            margin-top: 0.25rem;
+            line-height: 1.4;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 42px;
+            height: 22px;
+            flex-shrink: 0;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #ccc;
+            border-radius: 22px;
+            transition: background 0.2s;
+        }
+        .slider:before {
+            content: "";
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            left: 3px;
+            bottom: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .switch input:checked + .slider { background: #27ae60; }
+        .switch input:checked + .slider:before { transform: translateX(20px); }
+        .switch input:disabled + .slider { opacity: 0.5; cursor: wait; }
+
         .session-list {
             flex: 1;
             overflow-y: auto;
@@ -288,6 +340,16 @@
         <button class="drawer-close" id="drawerClose">✕</button>
     </div>
     <button class="btn-new-session" id="newSessionBtn">＋ 新建会话</button>
+    <div class="persist-panel" title="控制会话消息、话题摘要、摘要向量和用户画像是否写入 data/；空间物品库与反馈日志不受影响">
+        <div class="persist-row">
+            <span>💾 记忆落盘</span>
+            <label class="switch">
+                <input type="checkbox" id="persistToggle" onchange="togglePersistence(this)">
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="persist-hint" id="persistStatus">对话记忆会写入文件</div>
+    </div>
     <ul class="session-list" id="sessionList">
         <li style="text-align:center;color:#bbb;padding:1rem;">加载中...</li>
     </ul>
@@ -580,9 +642,70 @@ function escapeHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// ==================== 记忆落盘开关 ====================
+function renderPersistence(data, note) {
+    const enabled = !!data.enabled;
+    const toggle = document.getElementById('persistToggle');
+    if (toggle) toggle.checked = enabled;
+
+    const statusEl = document.getElementById('persistStatus');
+    if (!statusEl) return;
+    if (note) {
+        statusEl.textContent = note;
+    } else if (!enabled) {
+        statusEl.textContent = '仅保存在内存，重启后丢失';
+    } else {
+        const dirty = (data.dirty_sessions || 0) + (data.dirty_abstracts || 0)
+            + (data.dirty_vector_sessions || 0) + (data.dirty_personas || 0);
+        statusEl.textContent = dirty ? `待写入 ${dirty} 项` : '对话记忆会写入文件';
+    }
+}
+
+async function loadPersistence() {
+    try {
+        const resp = await fetch('/api/persistence');
+        if (!resp.ok) return;
+        renderPersistence(await resp.json());
+    } catch (e) {
+        console.warn('[落盘开关] 状态读取失败', e);
+    }
+}
+
+async function togglePersistence(el) {
+    const enabled = el.checked;
+    el.disabled = true;
+    try {
+        const resp = await fetch('/api/persistence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const f = data.flushed || {};
+        const written = (f.sessions || 0) + (f.abstracts || 0)
+            + (f.vector_sessions || 0) + (f.personas || 0);
+        if (enabled) {
+            renderPersistence(data, written ? `已开启 · 刚写入 ${written} 项` : '已开启 · 对话记忆会写入文件');
+            showToast(written ? `已写入 ${written} 项记忆` : '记忆落盘已开启');
+        } else {
+            renderPersistence(data, '已关闭 · 仅保存在内存，重启后丢失');
+            showToast('记忆落盘已关闭');
+        }
+    } catch (e) {
+        el.checked = !enabled;
+        const statusEl = document.getElementById('persistStatus');
+        if (statusEl) statusEl.textContent = '切换失败：' + e.message;
+        showToast('切换失败');
+    } finally {
+        el.disabled = false;
+    }
+}
+
 // ==================== 初始化 ====================
 function init() {
     connectWebSocket();
+    loadPersistence();
     // 初始状态：输入框禁用，等待选择会话
     disableInput(true);
 }

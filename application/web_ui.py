@@ -14,11 +14,13 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from openai import OpenAI
-from decision.personal.Peronal_manager import PersonalManager
+from decision.personal.Peronal_manager import PersonalManager, flush_pending_personas, persona_dirty_count
 from memory.semantic_memory import check_and_close_segment
 import uvicorn
 import config
+from application import persistence
 from application.data_exporter import DataExporter
 from Agent.agent import get_agent
 from Agent.tool_context import ToolContext, set_current_context, clear_current_context
@@ -441,6 +443,43 @@ async def get_reminders():
         return {"reminders": []}
     reminders = _matcher.drain_reminders()
     return {"reminders": reminders}
+
+
+# ==================== 记忆落盘开关 ====================
+class PersistenceRequest(BaseModel):
+    enabled: bool
+
+
+def _persistence_payload() -> dict:
+    payload = {"enabled": persistence.is_enabled()}
+    payload.update(DataExporter.persistence_stats())
+    payload["dirty_personas"] = persona_dirty_count()
+    return payload
+
+
+@app.get("/api/persistence")
+async def get_persistence():
+    """查询对话记忆是否写入文件。"""
+    return _persistence_payload()
+
+
+@app.post("/api/persistence")
+async def set_persistence(req: PersistenceRequest):
+    """
+    切换对话记忆落盘：
+    - 开启：把内存中待落盘的会话/摘要/向量/画像写入 data/
+    - 关闭：后续只更新内存，不写文件
+    """
+    flushed = {"sessions": 0, "abstracts": 0, "vector_sessions": 0, "personas": 0}
+    if req.enabled:
+        flushed.update(DataExporter.flush_pending())
+        flushed["personas"] = flush_pending_personas()
+
+    persistence.set_enabled(req.enabled)
+
+    payload = _persistence_payload()
+    payload["flushed"] = flushed
+    return payload
 
 
 def _get_persona_mgr(session_id: str) -> PersonalManager:

@@ -2,8 +2,10 @@
 """
 用户性格画像管理器 —— 从 PersonalMind_AI 移植而来，适配 Homer 多会话架构
 """
+import copy
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -13,11 +15,71 @@ import config
 from memory.semantic_memory import get_model
 from sentence_transformers import util
 import numpy as np
+from application import persistence
 
 # 五维画像结构
 DIMS = ["personality_traits", "interests", "values", "communication_style", "habits"]
 
-import config
+# 画像的进程内缓存（落盘开关关闭时是唯一数据源）
+_persona_cache: dict[str, dict] = {}
+_persona_dirty: set[str] = set()
+_persona_lock = threading.RLock()
+
+
+def _write_json_atomic(path: str, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
+def _persona_file(session_id: str) -> str:
+    return os.path.join(config.PERSONA_DIR, f"{session_id}_persona.json")
+
+
+def _base_file(session_id: str) -> str:
+    return os.path.join(config.PERSONA_DIR, f"{session_id}_base.json")
+
+
+def _counter_file(session_id: str) -> str:
+    return os.path.join(config.PERSONA_DIR, f"{session_id}_counter.json")
+
+
+def _write_persona_file(session_id: str, persona: dict):
+    _write_json_atomic(_persona_file(session_id), {
+        "user_persona": persona,
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    })
+
+
+def _write_base_file(session_id: str, base: dict):
+    _write_json_atomic(_base_file(session_id), base)
+
+
+def _write_counter_file(session_id: str, step: int):
+    _write_json_atomic(_counter_file(session_id), {"step": step})
+
+
+def flush_pending_personas() -> int:
+    """把内存中尚未落盘的画像/锚点/计数器写入文件，返回写入的 session 数"""
+    with _persona_lock:
+        sids = list(_persona_dirty)
+        for sid in sids:
+            entry = _persona_cache.get(sid, {})
+            if "persona" in entry:
+                _write_persona_file(sid, entry["persona"])
+            if "base" in entry and entry["base"] is not None:
+                _write_base_file(sid, entry["base"])
+            if "counter" in entry:
+                _write_counter_file(sid, entry["counter"])
+            _persona_dirty.discard(sid)
+        return len(sids)
+
+
+def persona_dirty_count() -> int:
+    with _persona_lock:
+        return len(_persona_dirty)
 
 
 class PersonalManager:
@@ -32,47 +94,74 @@ class PersonalManager:
         self.decay_step = self._load_counter()
 
     def _load(self) -> dict:
-        if os.path.exists(self.persona_file):
-            with open(self.persona_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("user_persona", self._empty_persona())
-        return self._empty_persona()
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            if "persona" in entry:
+                return copy.deepcopy(entry["persona"])
+
+            persona = self._empty_persona()
+            if os.path.exists(self.persona_file):
+                with open(self.persona_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                persona = data.get("user_persona", persona)
+            entry["persona"] = copy.deepcopy(persona)
+            return copy.deepcopy(persona)
 
     def _empty_persona(self):
         return {dim: {} for dim in DIMS}
 
     def _load_base(self) -> dict | None:
-        base_file = os.path.join(config.PERSONA_DIR, f"{self.session_id}_base.json")
-        if os.path.exists(base_file):
-            with open(base_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return None
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            if "base" in entry:
+                return copy.deepcopy(entry["base"])
+
+            base = None
+            if os.path.exists(_base_file(self.session_id)):
+                with open(_base_file(self.session_id), 'r', encoding='utf-8') as f:
+                    base = json.load(f)
+            entry["base"] = copy.deepcopy(base)
+            return copy.deepcopy(base)
 
     def _load_counter(self) -> int:
-        counter_file = os.path.join(config.PERSONA_DIR, f"{self.session_id}_counter.json")
-        if os.path.exists(counter_file):
-            with open(counter_file, 'r', encoding='utf-8') as f:
-                return json.load(f).get("step", 0)
-        return 0
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            if "counter" in entry:
+                return entry["counter"]
+
+            counter = 0
+            if os.path.exists(_counter_file(self.session_id)):
+                with open(_counter_file(self.session_id), 'r', encoding='utf-8') as f:
+                    counter = json.load(f).get("step", 0)
+            entry["counter"] = counter
+            return counter
 
     def _save(self):
-        os.makedirs(config.PERSONA_DIR, exist_ok=True)
-        data = {
-            "user_persona": self.persona,
-            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        with open(self.persona_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            entry["persona"] = copy.deepcopy(self.persona)
+            _persona_dirty.add(self.session_id)
+            if persistence.is_enabled():
+                _write_persona_file(self.session_id, self.persona)
+                _persona_dirty.discard(self.session_id)
 
     def _save_base(self):
-        base_file = os.path.join(config.PERSONA_DIR, f"{self.session_id}_base.json")
-        with open(base_file, 'w', encoding='utf-8') as f:
-            json.dump(self.base_persona, f, ensure_ascii=False, indent=2)
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            entry["base"] = copy.deepcopy(self.base_persona)
+            _persona_dirty.add(self.session_id)
+            if persistence.is_enabled():
+                _write_base_file(self.session_id, self.base_persona)
+                _persona_dirty.discard(self.session_id)
 
     def _save_counter(self):
-        counter_file = os.path.join(config.PERSONA_DIR, f"{self.session_id}_counter.json")
-        with open(counter_file, 'w', encoding='utf-8') as f:
-            json.dump({"step": self.decay_step}, f)
+        with _persona_lock:
+            entry = _persona_cache.setdefault(self.session_id, {})
+            entry["counter"] = self.decay_step
+            _persona_dirty.add(self.session_id)
+            if persistence.is_enabled():
+                _write_counter_file(self.session_id, self.decay_step)
+                _persona_dirty.discard(self.session_id)
 
     # ==================== 画像提取（LLM） ====================
     def _extract_with_llm(self, messages: list, mode: str = "both") -> dict:

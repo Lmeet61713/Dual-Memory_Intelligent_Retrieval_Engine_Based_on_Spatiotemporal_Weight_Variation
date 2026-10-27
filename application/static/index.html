@@ -24,6 +24,7 @@
             flex-direction: column;
             padding: 1rem;
             flex-shrink: 0;
+            overflow-y: auto;
             box-shadow: 1px 0 4px rgba(0,0,0,0.04);
         }
         .sidebar h3 {
@@ -187,6 +188,46 @@
             margin-top: 0.2rem;
         }
 
+        /* 记忆落盘开关 */
+        .switch-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.35rem 0.1rem;
+            font-size: 0.82rem;
+            color: #555;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 42px;
+            height: 22px;
+            flex-shrink: 0;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #ccc;
+            border-radius: 22px;
+            transition: background 0.2s;
+        }
+        .slider:before {
+            content: "";
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            left: 3px;
+            bottom: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .switch input:checked + .slider { background: #27ae60; }
+        .switch input:checked + .slider:before { transform: translateX(20px); }
+        .switch input:disabled + .slider { opacity: 0.5; cursor: wait; }
+
         /* ===== 主聊天区 ===== */
         .main {
             flex: 1;
@@ -342,6 +383,18 @@
     <div class="section-label">📷 摄像头</div>
     <button class="btn btn-camera" id="cameraBtn" onclick="toggleCamera()">开启摄像头</button>
     <div class="status-text" id="cameraStatus">未启动</div>
+
+    <hr>
+
+    <div class="section-label">💾 记忆落盘</div>
+    <div class="switch-row" title="控制会话消息、话题摘要、摘要向量和用户画像是否写入 data/；空间物品库与反馈日志不受影响">
+        <span id="persistState">已开启</span>
+        <label class="switch">
+            <input type="checkbox" id="persistToggle" onchange="togglePersistence(this)">
+            <span class="slider"></span>
+        </label>
+    </div>
+    <div class="status-text" id="persistStatus">对话记忆会写入文件</div>
 </aside>
 
 <!-- ==================== 主聊天区 ==================== -->
@@ -856,6 +909,66 @@ async function submitFeedback(msgIndex, feedbackType) {
         console.error('[反馈] 网络错误:', e);
     }
 }
+// ==================== 记忆落盘开关 ====================
+function renderPersistence(data, note) {
+    const enabled = !!data.enabled;
+    const toggle = document.getElementById('persistToggle');
+    toggle.checked = enabled;
+    document.getElementById('persistState').textContent = enabled ? '已开启' : '已关闭';
+
+    const statusEl = document.getElementById('persistStatus');
+    if (note) {
+        statusEl.textContent = note;
+        return;
+    }
+    if (!enabled) {
+        statusEl.textContent = '仅保存在内存，重启后丢失';
+    } else {
+        const dirty = (data.dirty_sessions || 0) + (data.dirty_abstracts || 0)
+            + (data.dirty_vector_sessions || 0) + (data.dirty_personas || 0);
+        statusEl.textContent = dirty ? `待写入 ${dirty} 项` : '对话记忆会写入文件';
+    }
+}
+
+async function loadPersistence() {
+    try {
+        const resp = await fetch('/api/persistence');
+        if (!resp.ok) return;
+        renderPersistence(await resp.json());
+    } catch (e) {
+        console.warn('[落盘开关] 状态读取失败', e);
+    }
+}
+
+async function togglePersistence(el) {
+    const enabled = el.checked;
+    const statusEl = document.getElementById('persistStatus');
+    el.disabled = true;
+    try {
+        const resp = await fetch('/api/persistence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const f = data.flushed || {};
+        const written = (f.sessions || 0) + (f.abstracts || 0)
+            + (f.vector_sessions || 0) + (f.personas || 0);
+        if (enabled) {
+            renderPersistence(data, written ? `已开启 · 刚写入 ${written} 项` : '已开启 · 对话记忆会写入文件');
+        } else {
+            renderPersistence(data, '已关闭 · 仅保存在内存，重启后丢失');
+        }
+    } catch (e) {
+        el.checked = !enabled;
+        statusEl.textContent = '切换失败：' + e.message;
+    } finally {
+        el.disabled = false;
+        loadSessions();
+    }
+}
+
 async function init() {
     // 检查摄像头状态
     try {
@@ -870,6 +983,7 @@ async function init() {
         }
     } catch(e) {}
 
+    loadPersistence();
     loadSessions();
     renderMessages();
     await initPersona();
