@@ -14,6 +14,8 @@ uv.lock
 PersonalMind_AI.py
 uv.png
 test
+tests/
+test_result/
 .venv
 langgraph.json
 端到端交互

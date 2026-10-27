@@ -219,13 +219,18 @@ uv sync
 ```
 
 ### 2. 配置
-#硬件交互 
-编辑 `config.py` 中的 API Key 和硬件参数：
+
+在项目根目录创建 `.env` 文件，`config.py` 会自动读取其中的 API Key：
+
+```env
+DEEPSEEK_API_KEY=你的DeepSeek_API_Key
+```
+
+> 获取地址：https://platform.deepseek.com/api_keys
+
+摄像头参数（若无需摄像头，使用纯对话模式可跳过）在 `config.py` 中配置：
 
 ```python
-# 填入你的 DeepSeek API Key（获取地址: https://platform.deepseek.com/api_keys）
-DEEPSEEK_API_KEY = "sk-xxxxxxxx"
-# 摄像头配置（若无需摄像头，使用纯对话模式可跳过）
 GLOBAL_CAM_ID = 1    # 全局摄像头设备索引
 MOBILE_CAM_ID = 2    # 移动摄像头设备索引
 ```
